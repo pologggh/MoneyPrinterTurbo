@@ -45,23 +45,18 @@ def get_default_executor_registry(
     """
     Returns default production executor registry.
 
-    In Stage Q1:
-    - Stage.EVIDENCE is registered with production EvidenceStageExecutor.
-    - Stage.KNOWLEDGE_PLAN is registered with production KnowledgePlanStageExecutor.
-    - Stage.SCRIPT is registered with production ScriptStageExecutor.
-    - Stage.STORYBOARD is registered with production StoryboardStageExecutor.
-    - Stage.PRODUCTION_PLAN is registered with production ProductionPlanStageExecutor.
-    - Stage.ASSET is registered with production AssetStageExecutor.
-    - Stage.AUDIO is registered with production AudioStageExecutor.
-    - Stage.COMPOSITION is registered with production CompositionStageExecutor.
-    - Stage.QUALITY_REVIEW is registered with production QualityReviewStageExecutor.
-    - Subsequent stages (Stage.DELIVERY) remain unregistered and unsupported.
+    In Stage D1:
+    - All 10 stages are registered with real production executors:
+      EVIDENCE, KNOWLEDGE_PLAN, SCRIPT, STORYBOARD, PRODUCTION_PLAN,
+      ASSET, AUDIO, COMPOSITION, QUALITY_REVIEW, and DELIVERY.
+    - Zero unsupported stages remain in the workflow pipeline.
     """
     from app.application.asset_stage_executor import AssetStageExecutor
     from app.application.audio_stage_executor import AudioStageExecutor
     from app.application.composition_stage_executor import (
         CompositionStageExecutor,
     )
+    from app.application.delivery_stage_executor import DeliveryStageExecutor
     from app.application.evidence_stage_executor import EvidenceStageExecutor
     from app.application.knowledge_plan_stage_executor import KnowledgePlanStageExecutor
     from app.application.production_plan_stage_executor import ProductionPlanStageExecutor
@@ -81,4 +76,5 @@ def get_default_executor_registry(
     registry.register(Stage.AUDIO, AudioStageExecutor(session_factory=session_factory))
     registry.register(Stage.COMPOSITION, CompositionStageExecutor(session_factory=session_factory))
     registry.register(Stage.QUALITY_REVIEW, QualityReviewStageExecutor(session_factory=session_factory))
+    registry.register(Stage.DELIVERY, DeliveryStageExecutor(session_factory=session_factory))
     return registry

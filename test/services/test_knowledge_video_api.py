@@ -213,3 +213,63 @@ def test_sensitive_credentials_redacted(client):
     assert "sk-secret-key-123456" not in str(metadata)
     assert metadata["api_key"] == "***"
     assert metadata["secret_token"] == "***"
+
+
+def test_list_tasks_returns_200(client):
+    """GET /api/v1/knowledge-video-tasks returns recent tasks."""
+    res = client.get("/api/v1/knowledge-video-tasks")
+    assert res.status_code == 200
+    data = res.json().get("data", [])
+    assert isinstance(data, list)
+
+
+def test_events_and_artifacts_endpoints(client):
+    """GET /api/v1/knowledge-video-tasks/{id}/events and /artifacts return 200."""
+    create_res = client.post(
+        "/api/v1/knowledge-video-tasks",
+        json={"topic": "Events and Artifacts Test"},
+    )
+    task_id = create_res.json()["data"]["task_id"]
+
+    ev_res = client.get(f"/api/v1/knowledge-video-tasks/{task_id}/events")
+    assert ev_res.status_code == 200
+    ev_data = ev_res.json().get("data", [])
+    assert isinstance(ev_data, list)
+
+    art_res = client.get(f"/api/v1/knowledge-video-tasks/{task_id}/artifacts")
+    assert art_res.status_code == 200
+    art_data = art_res.json().get("data", [])
+    assert isinstance(art_data, list)
+
+
+def test_revise_task_endpoint(client):
+    """POST /api/v1/knowledge-video-tasks/{id}/revise restarts stage with feedback."""
+    create_res = client.post(
+        "/api/v1/knowledge-video-tasks",
+        json={"topic": "Revise Test"},
+    )
+    task_id = create_res.json()["data"]["task_id"]
+
+    rev_res = client.post(
+        f"/api/v1/knowledge-video-tasks/{task_id}/revise",
+        json={
+            "target_stage": "SCRIPT",
+            "feedback": "Make it simpler and shorter",
+        },
+    )
+    assert rev_res.status_code == 200
+    assert rev_res.json()["data"]["current_stage"] == "SCRIPT"
+    assert rev_res.json()["data"]["is_partial_rerun"] is True
+
+
+def test_delivery_manifest_endpoint_404_when_incomplete(client):
+    """GET /api/v1/knowledge-video-tasks/{id}/delivery returns 404 if not delivered."""
+    create_res = client.post(
+        "/api/v1/knowledge-video-tasks",
+        json={"topic": "Delivery Manifest Test"},
+    )
+    task_id = create_res.json()["data"]["task_id"]
+
+    del_res = client.get(f"/api/v1/knowledge-video-tasks/{task_id}/delivery")
+    assert del_res.status_code == 404
+

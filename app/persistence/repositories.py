@@ -2183,3 +2183,48 @@ class CompositionOutputRepository:
         return [composition_output_from_orm(r) for r in self._session.scalars(stmt).all()]
 
 
+class DeliveryManifestRepository:
+    """Repository for managing immutable DeliveryManifest artifacts."""
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def save_delivery_manifest(self, manifest: Any) -> Any:
+        """Persists a domain DeliveryManifest."""
+        from app.persistence.converters import (
+            delivery_manifest_from_orm,
+            delivery_manifest_to_orm,
+        )
+        from app.persistence.models import DeliveryManifestORM
+
+        orm = self._session.get(DeliveryManifestORM, manifest.delivery_manifest_id)
+        if orm is None:
+            orm = delivery_manifest_to_orm(manifest)
+            self._session.add(orm)
+        self._session.flush()
+        return delivery_manifest_from_orm(orm)
+
+    def get_delivery_manifest(self, delivery_manifest_id: str) -> Any | None:
+        """Retrieves a DeliveryManifest by primary key ID."""
+        from app.persistence.converters import delivery_manifest_from_orm
+        from app.persistence.models import DeliveryManifestORM
+
+        orm = self._session.get(DeliveryManifestORM, delivery_manifest_id)
+        return delivery_manifest_from_orm(orm) if orm is not None else None
+
+    def get_delivery_manifest_for_task(self, task_id: str) -> Any | None:
+        """Returns the latest DeliveryManifest for a task based on created_at."""
+        from app.persistence.converters import delivery_manifest_from_orm
+        from app.persistence.models import DeliveryManifestORM
+
+        stmt = (
+            select(DeliveryManifestORM)
+            .where(DeliveryManifestORM.task_id == task_id)
+            .order_by(DeliveryManifestORM.created_at.desc())
+            .limit(1)
+        )
+        orm = self._session.scalars(stmt).first()
+        return delivery_manifest_from_orm(orm) if orm is not None else None
+
+
+

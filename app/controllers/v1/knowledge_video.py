@@ -23,8 +23,11 @@ from app.domain.evidence import (
     SourceType,
     UnsupportedSourceTypeError,
 )
+import os
+from pathlib import Path
 from app.domain.workflow_state import (
     InvalidStateTransitionError,
+    Stage,
     TerminalStateImmutableError,
     WorkflowConflictError,
     WorkflowPolicyType,
@@ -120,6 +123,20 @@ def create_task(body: CreateKnowledgeVideoTaskRequest):
         except Exception as exc:
             logger.error(f"Failed to create KnowledgeVideoTask: {exc}")
             raise
+
+
+@router.get(
+    "/knowledge-video-tasks",
+    summary="List Knowledge Video Tasks",
+)
+def list_tasks(limit: int = 50, offset: int = 0):
+    """
+    Lists recent KnowledgeVideoTasks ordered by creation time descending.
+    """
+    with get_session() as session:
+        query_service = TaskQueryService(session)
+        tasks = query_service.list_tasks(limit=limit, offset=offset)
+        return utils.get_response(200, data=tasks, message="Tasks listed")
 
 
 @router.get(
@@ -484,4 +501,184 @@ def list_task_chunks(task_id: str):
             for c in chunks
         ]
         return utils.get_response(200, data=data, message="Chunks listed")
+
+
+@router.get(
+    "/knowledge-video-tasks/{task_id}/events",
+    summary="Get execution trace events for a Knowledge Video Task",
+)
+def get_task_events(task_id: str):
+    """
+    Returns chronological domain trace events recorded for this task.
+    """
+    with get_session() as session:
+        query_service = TaskQueryService(session)
+        events = query_service.get_task_events(task_id)
+        return utils.get_response(200, data=events, message="Events retrieved")
+
+
+@router.get(
+    "/knowledge-video-tasks/{task_id}/artifacts",
+    summary="Get artifact references for a Knowledge Video Task",
+)
+def get_task_artifacts(task_id: str):
+    """
+    Returns all task artifact references (typed pointers to domain outputs) for this task.
+    """
+    with get_session() as session:
+        query_service = TaskQueryService(session)
+        artifacts = query_service.get_task_artifacts(task_id)
+        return utils.get_response(200, data=artifacts, message="Artifacts retrieved")
+
+
+class ReviseKnowledgeVideoTaskRequest(BaseModel):
+    target_stage: Stage | None = Field(default=None, description="Stage to restart from (e.g. SCRIPT, STORYBOARD)")
+    feedback: str | None = Field(default=None, description="User revision instructions or feedback")
+    topic: str | None = Field(default=None, description="Updated topic")
+    target_duration: float | None = Field(default=None, gt=0, description="Updated target duration in seconds")
+    aspect_ratio: str | None = Field(default=None, description="Updated aspect ratio")
+
+
+@router.post(
+    "/knowledge-video-tasks/{task_id}/revise",
+    summary="Revise or rerun a Knowledge Video Task",
+)
+def revise_task(task_id: str, body: ReviseKnowledgeVideoTaskRequest | None = None):
+    """
+    Applies user revisions or feedback and reruns the workflow from a designated stage.
+    """
+    target_stage = body.target_stage if body else None
+    feedback = body.feedback if body else None
+    topic = body.topic if body else None
+    target_duration = body.target_duration if body else None
+    aspect_ratio = body.aspect_ratio if body else None
+
+    with get_session() as session:
+        command_service = TaskCommandService(session)
+        try:
+            task = command_service.revise_task(
+                task_id=task_id,
+                target_stage=target_stage,
+                feedback=feedback,
+                topic=topic,
+                target_duration=target_duration,
+                aspect_ratio=aspect_ratio,
+            )
+            session.commit()
+            return utils.get_response(
+                200,
+                data={
+                    "task_id": task.task_id,
+                    "task_status": task.task_status.value,
+                    "current_stage": task.current_stage.value,
+                    "is_partial_rerun": task.task_metadata.get("is_partial_rerun", False),
+                },
+                message="Task revision accepted and re-enqueued",
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (WorkflowConflictError, InvalidStateTransitionError, TerminalStateImmutableError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.get(
+    "/knowledge-video-tasks/{task_id}/delivery",
+    summary="Get final delivery manifest for a Knowledge Video Task",
+)
+def get_delivery_manifest(task_id: str):
+    """
+    Retrieves the authoritative delivery manifest for a completed task.
+    """
+    with get_session() as session:
+        query_service = TaskQueryService(session)
+        manifest = query_service.get_delivery_manifest(task_id)
+        if manifest is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Delivery manifest not found for task '{task_id}'.",
+            )
+        return utils.get_response(200, data=manifest, message="Delivery manifest retrieved")
+
+
+@router.get(
+    "/knowledge-video-tasks/{task_id}/delivery/download",
+    summary="Safely download delivery artifact file for a task",
+)
+def download_delivery_file(
+    task_id: str,
+    target: str = "video",
+):
+    """
+    Downloads an authoritative delivery artifact for the task.
+    Enforces path-traversal prevention and strict task-isolation safety.
+    """
+    from fastapi.responses import FileResponse
+    from app.utils.file_security import resolve_path_within_directory
+
+    with get_session() as session:
+        query_service = TaskQueryService(session)
+        manifest = query_service.get_delivery_manifest(task_id)
+        if manifest is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Delivery manifest not found for task '{task_id}'.",
+            )
+
+    target_map = {
+        "video": (manifest.get("final_video_path"), "video/mp4"),
+        "subtitle": (manifest.get("subtitle_path"), "text/plain"),
+        "source_report": (manifest.get("source_report_path"), "text/markdown"),
+        "execution_report": (manifest.get("execution_report_path"), "text/markdown"),
+    }
+
+    target_info = target_map.get(target.lower())
+    if target_info is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid target '{target}'. Allowed: video, subtitle, source_report, execution_report.",
+        )
+
+    file_path, media_type = target_info
+    if not file_path:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Artifact for target '{target}' does not exist for task '{task_id}'.",
+        )
+
+    # Validate file existence on disk
+    if not os.path.exists(file_path) or not os.path.isfile(file_path):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Artifact file for target '{target}' not found on storage disk.",
+        )
+
+    # Path-traversal & task-isolation check:
+    allowed_bases = [
+        utils.task_dir(task_id),
+        utils.task_dir(),
+        utils.storage_dir(),
+    ]
+    resolved_path = None
+    for base in allowed_bases:
+        try:
+            resolved_path = resolve_path_within_directory(base, file_path, require_file=True)
+            break
+        except ValueError:
+            continue
+
+    if resolved_path is None:
+        real_file = os.path.realpath(file_path)
+        if ".." in file_path or task_id not in real_file:
+            raise HTTPException(
+                status_code=403,
+                detail="Access denied: file path violates task isolation or security constraints.",
+            )
+        resolved_path = real_file
+
+    filename = Path(resolved_path).name
+    return FileResponse(
+        path=resolved_path,
+        filename=filename,
+        media_type=media_type,
+    )
 

@@ -18,7 +18,18 @@ from uuid import UUID, uuid4
 import requests
 import streamlit as st
 from loguru import logger
-from streamlit_tour import Tour
+
+try:
+    from streamlit_tour import Tour
+except ImportError:
+    class Tour:  # type: ignore
+        def __init__(self, *args, **kwargs):
+            pass
+
+        @classmethod
+        def bind(cls, *args, **kwargs):
+            from types import SimpleNamespace
+            return SimpleNamespace(popover={})
 
 # WebUI 作为独立入口运行时，需要让项目根目录优先于第三方依赖，
 # 避免依赖中的同名 app 包遮蔽 MoneyPrinterTurbo 自己的 app 包。
@@ -63,6 +74,15 @@ from app.services import task as tm
 from app.services import version_checker
 from app.utils.logging_utils import configure_terminal_logger
 from app.utils import utils
+
+@st.cache_resource
+def _ensure_database_initialized() -> bool:
+    from app.persistence.database_lifecycle import init_database_on_startup
+    return init_database_on_startup(timeout=10.0)
+
+db_ready = _ensure_database_initialized()
+if "db_initialized" not in st.session_state:
+    st.session_state["db_initialized"] = db_ready
 
 st.set_page_config(
     page_title="MoneyPrinterTurbo",
@@ -1668,7 +1688,7 @@ def _render_top_bar():
     # 将两个区域整体换行，操作区内部再根据剩余宽度自动换行。
     with st.container(key="top_bar"):
         brand_col, actions_col = st.columns(
-            [3.5, 2.0],
+            [2.0, 3.5],
             vertical_alignment="center",
             gap="small",
         )
@@ -1689,6 +1709,42 @@ def _render_top_bar():
             gap="small",
             width="stretch",
         ):
+            view_modes = [
+                "knowledge_agent",
+                "legacy_video_generation",
+                "legacy_storyboard_workbench",
+                "benchmark_workbench",
+            ]
+            current_view_mode = st.session_state.get(
+                "app_view_mode", "knowledge_agent"
+            )
+            if current_view_mode == "video_generation":
+                current_view_mode = "legacy_video_generation"
+            elif current_view_mode == "storyboard_workbench":
+                current_view_mode = "legacy_storyboard_workbench"
+            if current_view_mode not in view_modes:
+                current_view_mode = "knowledge_agent"
+
+            mode_labels = {
+                "knowledge_agent": tr("Knowledge Video Agent"),
+                "legacy_video_generation": tr("Legacy: One-Click Generator"),
+                "legacy_storyboard_workbench": tr("Legacy: Storyboard Workbench"),
+                "benchmark_workbench": tr("Benchmark Workbench"),
+            }
+
+            selected_mode = st.selectbox(
+                "View Mode",
+                options=view_modes,
+                index=view_modes.index(current_view_mode),
+                format_func=lambda m: mode_labels.get(m, m),
+                key="top_view_mode_selector",
+                label_visibility="collapsed",
+                width=240,
+            )
+            if selected_mode != current_view_mode:
+                st.session_state["app_view_mode"] = selected_mode
+                st.rerun()
+
             _render_task_manager_entry()
 
             st.button(
@@ -7542,6 +7598,29 @@ def _render_application():
 
     if st.session_state.get("settings_dialog_open", False):
         _render_settings_dialog()
+
+    current_mode = st.session_state.get("app_view_mode", "knowledge_agent")
+
+    if current_mode == "knowledge_agent":
+        from webui.agent_page import render_agent_page
+
+        render_agent_page()
+        return
+
+    if current_mode in ("legacy_storyboard_workbench", "storyboard_workbench"):
+        st.warning(tr("Legacy Storyboard Notice"))
+        from webui.storyboard_workbench import render_storyboard_workbench
+
+        render_storyboard_workbench()
+        return
+
+    if current_mode == "benchmark_workbench":
+        from webui.benchmark_workbench import render_benchmark_workbench
+
+        render_benchmark_workbench()
+        return
+
+    st.warning(tr("Legacy Video Gen Notice"))
 
     if _apply_pending_settings_preset():
         st.success(tr("Settings Preset Imported"))

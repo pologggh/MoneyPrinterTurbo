@@ -1973,3 +1973,49 @@ def composition_output_from_orm(orm: Any) -> Any:
     )
 
 
+def delivery_manifest_to_orm(manifest: Any) -> Any:
+    """Converts a domain DeliveryManifest to a DeliveryManifestORM record."""
+    from app.persistence.models import DeliveryManifestORM
+
+    return DeliveryManifestORM(
+        delivery_manifest_id=manifest.delivery_manifest_id,
+        task_id=manifest.task_id,
+        composition_output_id=manifest.composition_output_id,
+        evaluation_snapshot_id=manifest.evaluation_snapshot_id,
+        final_video_path=manifest.final_video_path,
+        final_video_hash=manifest.final_video_hash,
+        final_video_size_bytes=manifest.final_video_size_bytes,
+        subtitle_path=manifest.subtitle_path,
+        subtitle_hash=manifest.subtitle_hash,
+        source_report_path=manifest.source_report_path,
+        source_report_hash=manifest.source_report_hash,
+        execution_report_path=manifest.execution_report_path,
+        execution_report_hash=manifest.execution_report_hash,
+        delivery_params_snapshot_json=manifest.delivery_params_snapshot or {},
+        created_at=manifest.created_at,
+    )
+
+
+def delivery_manifest_from_orm(orm: Any) -> Any:
+    """Reconstructs a domain DeliveryManifest from a DeliveryManifestORM record."""
+    from app.domain.delivery import DeliveryManifest
+
+    return DeliveryManifest(
+        delivery_manifest_id=orm.delivery_manifest_id,
+        task_id=orm.task_id,
+        composition_output_id=orm.composition_output_id,
+        evaluation_snapshot_id=orm.evaluation_snapshot_id,
+        final_video_path=orm.final_video_path,
+        final_video_hash=orm.final_video_hash,
+        final_video_size_bytes=orm.final_video_size_bytes,
+        subtitle_path=orm.subtitle_path,
+        subtitle_hash=orm.subtitle_hash,
+        source_report_path=orm.source_report_path,
+        source_report_hash=orm.source_report_hash,
+        execution_report_path=orm.execution_report_path,
+        execution_report_hash=orm.execution_report_hash,
+        delivery_params_snapshot=orm.delivery_params_snapshot_json or {},
+        created_at=orm.created_at,
+    )
+
+

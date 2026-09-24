@@ -114,3 +114,89 @@ class TaskQueryService:
                 "finished_at": t.finished_at.isoformat() if t.finished_at else None,
             })
         return result
+
+    def get_task_artifacts(self, task_id: str) -> list[dict[str, Any]]:
+        """
+        Lists all task artifact references associated with the task.
+        """
+        from app.persistence.repositories import TaskArtifactRepository
+        art_repo = TaskArtifactRepository(self._session)
+        refs = art_repo.list_artifact_refs_for_task(task_id)
+        result = []
+        for r in refs:
+            result.append({
+                "task_artifact_ref_id": r.task_artifact_ref_id,
+                "task_id": r.task_id,
+                "stage": r.stage.value if hasattr(r.stage, "value") else str(r.stage),
+                "artifact_type": r.artifact_type.value if hasattr(r.artifact_type, "value") else str(r.artifact_type),
+                "artifact_id": r.artifact_id,
+                "artifact_version": r.artifact_version,
+                "is_current": r.is_current,
+                "is_stale": r.is_stale,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "metadata": r.metadata_json or {},
+            })
+        return result
+
+    def get_task_events(self, task_id: str) -> list[dict[str, Any]]:
+        """
+        Lists all trace events associated with the task in chronological order.
+        """
+        from sqlalchemy import select
+        from app.persistence.models import TraceEventORM, TraceRootORM
+
+        stmt = (
+            select(TraceEventORM)
+            .where(
+                (TraceEventORM.trace_id == task_id)
+                | (
+                    TraceEventORM.trace_id.in_(
+                        select(TraceRootORM.trace_id).where(TraceRootORM.root_reference_id == task_id)
+                    )
+                )
+            )
+            .order_by(TraceEventORM.started_at.asc(), TraceEventORM.created_at.asc())
+        )
+        events = self._session.scalars(stmt).all()
+        result = []
+        for ev in events:
+            result.append({
+                "trace_event_id": ev.trace_event_id,
+                "trace_id": ev.trace_id,
+                "event_type": ev.event_type,
+                "status": ev.status,
+                "started_at": ev.started_at.isoformat() if ev.started_at else None,
+                "completed_at": ev.completed_at.isoformat() if ev.completed_at else None,
+                "duration_ms": ev.duration_ms,
+                "attributes": ev.attributes_json or {},
+                "created_at": ev.created_at.isoformat() if ev.created_at else None,
+            })
+        return result
+
+    def get_delivery_manifest(self, task_id: str) -> dict[str, Any] | None:
+        """
+        Retrieves final delivery manifest details for a task.
+        """
+        from app.persistence.repositories import DeliveryManifestRepository
+
+        deliv_repo = DeliveryManifestRepository(self._session)
+        manifest = deliv_repo.get_delivery_manifest_for_task(task_id)
+        if manifest is None:
+            return None
+        return {
+            "delivery_manifest_id": manifest.delivery_manifest_id,
+            "task_id": manifest.task_id,
+            "composition_output_id": manifest.composition_output_id,
+            "evaluation_snapshot_id": manifest.evaluation_snapshot_id,
+            "final_video_path": manifest.final_video_path,
+            "final_video_hash": manifest.final_video_hash,
+            "final_video_size_bytes": manifest.final_video_size_bytes,
+            "subtitle_path": manifest.subtitle_path,
+            "subtitle_hash": manifest.subtitle_hash,
+            "source_report_path": manifest.source_report_path,
+            "source_report_hash": manifest.source_report_hash,
+            "execution_report_path": manifest.execution_report_path,
+            "execution_report_hash": manifest.execution_report_hash,
+            "delivery_params_snapshot": manifest.delivery_params_snapshot,
+            "created_at": manifest.created_at.isoformat() if manifest.created_at else None,
+        }

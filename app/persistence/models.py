@@ -1506,3 +1506,46 @@ class CompositionOutputORM(Base):
     )
 
 
+class DeliveryManifestORM(Base):
+    __tablename__ = "delivery_manifests"
+
+    delivery_manifest_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    task_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("knowledge_video_tasks.task_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    composition_output_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("composition_outputs.composition_output_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    evaluation_snapshot_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("evaluation_snapshots.evaluation_snapshot_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    final_video_path: Mapped[str] = mapped_column(String(512), nullable=False)
+    final_video_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    final_video_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    subtitle_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    subtitle_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    source_report_path: Mapped[str] = mapped_column(String(512), nullable=False)
+    source_report_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    execution_report_path: Mapped[str] = mapped_column(String(512), nullable=False)
+    execution_report_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    delivery_params_snapshot_json: Mapped[dict] = mapped_column(
+        EvidenceType, nullable=False, default=dict
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_delivery_manifests_task_id", "task_id"),
+        Index("ix_delivery_manifests_composition_id", "composition_output_id"),
+        Index("ix_delivery_manifests_eval_snapshot_id", "evaluation_snapshot_id"),
+    )
+
+
+

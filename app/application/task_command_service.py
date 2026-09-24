@@ -201,3 +201,93 @@ class TaskCommandService:
             self.job_repo.update_job(cur_job)
 
         return task
+
+    def revise_task(
+        self,
+        task_id: str,
+        target_stage: Stage | None = None,
+        feedback: str | None = None,
+        topic: str | None = None,
+        target_duration: float | None = None,
+        aspect_ratio: str | None = None,
+        now: datetime | None = None,
+    ) -> KnowledgeVideoTask:
+        """
+        Revises a task with feedback, updated parameters, or requests a rerun from an earlier stage.
+        """
+        from app.domain.workflow_state import STAGE_ORDER
+        from app.persistence.repositories import TaskArtifactRepository
+
+        ts = now or datetime.now(UTC)
+        task = self.task_repo.get_task(task_id)
+        if task is None:
+            raise ValueError(f"Task '{task_id}' not found.")
+
+        if task.task_status.is_terminal:
+            raise TerminalStateImmutableError(
+                f"Cannot revise task '{task_id}' in terminal state '{task.task_status.value}'."
+            )
+
+        if topic:
+            task.topic = topic
+        if target_duration:
+            task.target_duration = target_duration
+        if aspect_ratio:
+            task.aspect_ratio = aspect_ratio
+        if feedback:
+            meta = dict(task.task_metadata or {})
+            meta["revision_feedback"] = feedback
+            meta["is_partial_rerun"] = True
+            task.task_metadata = meta
+
+        stage_to_run = target_stage or task.current_stage
+        task.set_stage_for_rerun(stage_to_run, now=ts)
+
+        if task.task_status != TaskStatus.RUNNING:
+            task.transition_to(TaskStatus.RUNNING, reason=feedback or "Revision requested", now=ts)
+        self.task_repo.save_task(task)
+
+        # Cancel active job if any
+        cur_job = self.job_repo.get_current_job_for_task(task_id)
+        if cur_job and cur_job.status in (
+            JobStatus.QUEUED,
+            JobStatus.LEASED,
+            JobStatus.RUNNING,
+        ):
+            cur_job.status = JobStatus.CANCELLED
+            cur_job.finished_at = ts
+            self.job_repo.update_job(cur_job)
+
+        # Mark downstream artifacts stale
+        art_repo = TaskArtifactRepository(self._session)
+        idx = STAGE_ORDER.index(stage_to_run)
+        for s in STAGE_ORDER[idx:]:
+            for ref in art_repo.list_artifact_refs_for_task(task_id, stage=s):
+                art_repo.mark_artifact_stale(
+                    ref.task_artifact_ref_id, reason="revision_rerun", now=ts
+                )
+
+        input_ref_id = None
+        if idx > 0:
+            prior_stage = STAGE_ORDER[idx - 1]
+            prior_ref = art_repo.get_latest_artifact_ref(task_id, stage=prior_stage)
+            if prior_ref:
+                input_ref_id = prior_ref.task_artifact_ref_id
+
+        seq = 1
+        idempotency_key = f"idemp_{task.task_id}_{stage_to_run.value.lower()}_rev_{seq}"
+        while self.job_repo.get_job_by_idempotency_key(idempotency_key) is not None:
+            seq += 1
+            idempotency_key = f"idemp_{task.task_id}_{stage_to_run.value.lower()}_rev_{seq}"
+
+        new_job = WorkflowJob.create(
+            task_id=task.task_id,
+            stage=stage_to_run,
+            idempotency_key=idempotency_key,
+            attempt_number=1,
+            input_task_artifact_ref_id=input_ref_id,
+            now=ts,
+        )
+        self.job_repo.create_job(new_job)
+
+        return task

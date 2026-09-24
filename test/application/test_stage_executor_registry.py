@@ -20,16 +20,17 @@ class DummyStageExecutor:
         return StageExecutionResult(success=True)
 
 
-def test_default_executor_registry_has_production_plan_and_asset_executors():
-    """Verify that default production registry has executors for EVIDENCE, KNOWLEDGE_PLAN, SCRIPT, STORYBOARD, PRODUCTION_PLAN, ASSET, and AUDIO."""
+def test_default_executor_registry_has_all_ten_production_executors():
+    """Verify that default production registry has executors for all 10 workflow stages in Stage D1."""
     from app.application.asset_stage_executor import AssetStageExecutor
     from app.application.audio_stage_executor import AudioStageExecutor
-    from app.application.evidence_stage_executor import EvidenceStageExecutor
-    from app.application.knowledge_plan_stage_executor import KnowledgePlanStageExecutor
-    from app.application.production_plan_stage_executor import ProductionPlanStageExecutor
     from app.application.composition_stage_executor import (
         CompositionStageExecutor,
     )
+    from app.application.delivery_stage_executor import DeliveryStageExecutor
+    from app.application.evidence_stage_executor import EvidenceStageExecutor
+    from app.application.knowledge_plan_stage_executor import KnowledgePlanStageExecutor
+    from app.application.production_plan_stage_executor import ProductionPlanStageExecutor
     from app.application.quality_review_stage_executor import (
         QualityReviewStageExecutor,
     )
@@ -37,7 +38,7 @@ def test_default_executor_registry_has_production_plan_and_asset_executors():
     from app.application.storyboard_stage_executor import StoryboardStageExecutor
 
     registry = get_default_executor_registry()
-    assert len(registry.list_supported_stages()) == 9
+    assert len(registry.list_supported_stages()) == 10
     assert registry.has_executor(Stage.EVIDENCE)
     assert isinstance(registry.get_executor(Stage.EVIDENCE), EvidenceStageExecutor)
     assert registry.has_executor(Stage.KNOWLEDGE_PLAN)
@@ -56,21 +57,13 @@ def test_default_executor_registry_has_production_plan_and_asset_executors():
     assert isinstance(registry.get_executor(Stage.COMPOSITION), CompositionStageExecutor)
     assert registry.has_executor(Stage.QUALITY_REVIEW)
     assert isinstance(registry.get_executor(Stage.QUALITY_REVIEW), QualityReviewStageExecutor)
+    assert registry.has_executor(Stage.DELIVERY)
+    assert isinstance(registry.get_executor(Stage.DELIVERY), DeliveryStageExecutor)
 
+    # All 10 stages are supported; none unsupported
     for stage in Stage:
-        if stage not in (
-            Stage.EVIDENCE,
-            Stage.KNOWLEDGE_PLAN,
-            Stage.SCRIPT,
-            Stage.STORYBOARD,
-            Stage.PRODUCTION_PLAN,
-            Stage.ASSET,
-            Stage.AUDIO,
-            Stage.COMPOSITION,
-            Stage.QUALITY_REVIEW,
-        ):
-            assert not registry.has_executor(stage)
-            assert registry.get_executor(stage) is None
+        assert registry.has_executor(stage)
+        assert registry.get_executor(stage) is not None
 
 
 def test_stage_executor_registry_registration_and_lookup():
