@@ -25,15 +25,23 @@ from app.domain.evaluation import (
     EvaluationSnapshot,
     EvaluationTarget,
 )
+from app.domain.knowledge_video_task import KnowledgeVideoTask
 from app.domain.plan_diff import validate_content_plan_revision_lineages
 from app.domain.quality_remediation import (
     QualityRemediationDecision,
     ShotQualitySelection,
 )
 from app.domain.shot import Shot, ShotRevision
+from app.domain.stage_execution import StageExecution
 from app.domain.storyboard import StoryboardSnapshot
 from app.domain.storyboard_approval import StoryboardApprovalRecord
 from app.domain.trace import TraceEvent, TraceEventStatus, TraceRoot
+from app.domain.workflow_job import WorkflowJob
+from app.domain.workflow_state import (
+    JobStatus,
+    Stage,
+    WorkflowConflictError,
+)
 from app.persistence.converters import (
     asset_route_plan_from_orm,
     asset_route_plan_to_orm,
@@ -57,6 +65,8 @@ from app.persistence.converters import (
     execution_run_to_orm,
     execution_transition_from_orm,
     execution_transition_to_orm,
+    knowledge_video_task_from_orm,
+    knowledge_video_task_to_orm,
     provider_receipt_from_orm,
     provider_receipt_to_orm,
     quality_remediation_decision_from_orm,
@@ -71,6 +81,8 @@ from app.persistence.converters import (
     shot_revision_from_orm,
     shot_revision_to_orm,
     shot_to_orm,
+    stage_execution_from_orm,
+    stage_execution_to_orm,
     storyboard_approval_record_from_orm,
     storyboard_approval_record_to_orm,
     storyboard_snapshot_from_orm,
@@ -79,6 +91,8 @@ from app.persistence.converters import (
     trace_event_to_orm,
     trace_root_from_orm,
     trace_root_to_orm,
+    workflow_job_from_orm,
+    workflow_job_to_orm,
 )
 from app.persistence.models import (
     AssetRoutePlanORM,
@@ -92,6 +106,7 @@ from app.persistence.models import (
     ExecutionAttemptORM,
     ExecutionRunORM,
     ExecutionTransitionORM,
+    KnowledgeVideoTaskORM,
     ProviderReceiptORM,
     QualityRemediationDecisionORM,
     ShotAssetVersionORM,
@@ -99,10 +114,12 @@ from app.persistence.models import (
     ShotORM,
     ShotQualitySelectionORM,
     ShotRevisionORM,
+    StageExecutionORM,
     StoryboardApprovalRecordORM,
     StoryboardSnapshotORM,
     TraceEventORM,
     TraceRootORM,
+    WorkflowJobORM,
 )
 from app.services.evaluation.composition_preview import CompositionPreview
 
@@ -1262,5 +1279,239 @@ class BenchmarkRepository:
 
         orm = self._session.get(BenchmarkComparisonReportORM, comparison_id)
         return benchmark_comparison_report_from_orm(orm) if orm else None
+
+
+class KnowledgeVideoTaskRepository:
+    """Repository for managing KnowledgeVideoTask persistence and state."""
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def save_task(self, task: KnowledgeVideoTask) -> KnowledgeVideoTask:
+        existing = self._session.get(KnowledgeVideoTaskORM, task.task_id)
+        if existing is None:
+            orm = knowledge_video_task_to_orm(task)
+            self._session.add(orm)
+        else:
+            existing.topic = task.topic
+            existing.task_status = task.task_status.value if hasattr(task.task_status, "value") else str(task.task_status)
+            existing.current_stage = task.current_stage.value if hasattr(task.current_stage, "value") else str(task.current_stage)
+            existing.workflow_policy = task.workflow_policy.value if hasattr(task.workflow_policy, "value") else str(task.workflow_policy)
+            existing.target_duration = task.target_duration
+            existing.aspect_ratio = task.aspect_ratio
+            existing.language = task.language
+            existing.waiting_reason = task.waiting_reason
+            existing.error_type = task.error_type.value if (task.error_type and hasattr(task.error_type, "value")) else (str(task.error_type) if task.error_type else None)
+            existing.error_message = task.error_message
+            existing.metadata_json = task.task_metadata
+            existing.updated_at = task.updated_at
+            existing.finished_at = task.finished_at
+            orm = existing
+        self._session.flush()
+        return knowledge_video_task_from_orm(orm)
+
+    def get_task(self, task_id: str) -> KnowledgeVideoTask | None:
+        orm = self._session.get(KnowledgeVideoTaskORM, task_id)
+        return knowledge_video_task_from_orm(orm) if orm is not None else None
+
+    def list_tasks(self, limit: int = 50, offset: int = 0) -> list[KnowledgeVideoTask]:
+        stmt = (
+            select(KnowledgeVideoTaskORM)
+            .order_by(KnowledgeVideoTaskORM.created_at.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        return [knowledge_video_task_from_orm(r) for r in self._session.scalars(stmt).all()]
+
+
+class WorkflowJobRepository:
+    """Repository for managing durable WorkflowJob execution units, leases, and concurrency."""
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def create_job(self, job: WorkflowJob) -> WorkflowJob:
+        orm = workflow_job_to_orm(job)
+        self._session.add(orm)
+        self._session.flush()
+        return workflow_job_from_orm(orm)
+
+    def get_job(self, job_id: str) -> WorkflowJob | None:
+        orm = self._session.get(WorkflowJobORM, job_id)
+        return workflow_job_from_orm(orm) if orm is not None else None
+
+    def get_job_by_idempotency_key(self, idempotency_key: str) -> WorkflowJob | None:
+        stmt = select(WorkflowJobORM).where(WorkflowJobORM.idempotency_key == idempotency_key)
+        orm = self._session.scalars(stmt).first()
+        return workflow_job_from_orm(orm) if orm is not None else None
+
+    def get_current_job_for_task(self, task_id: str) -> WorkflowJob | None:
+        stmt = (
+            select(WorkflowJobORM)
+            .where(WorkflowJobORM.task_id == task_id)
+            .order_by(WorkflowJobORM.attempt_number.desc(), WorkflowJobORM.created_at.desc())
+            .limit(1)
+        )
+        orm = self._session.scalars(stmt).first()
+        return workflow_job_from_orm(orm) if orm is not None else None
+
+    def update_job(self, job: WorkflowJob) -> WorkflowJob:
+        orm = self._session.get(WorkflowJobORM, job.job_id)
+        if orm is None:
+            raise ValueError(f"Job {job.job_id} not found")
+        orm.status = job.status.value if hasattr(job.status, "value") else str(job.status)
+        orm.stage = job.stage.value if hasattr(job.stage, "value") else str(job.stage)
+        orm.attempt_number = job.attempt_number
+        orm.max_attempts = job.max_attempts
+        orm.available_at = job.available_at
+        orm.lease_owner = job.lease_owner
+        orm.lease_expires_at = job.lease_expires_at
+        orm.heartbeat_at = job.heartbeat_at
+        orm.input_artifact_revision_id = job.input_artifact_revision_id
+        orm.output_artifact_revision_id = job.output_artifact_revision_id
+        orm.error_type = job.error_type
+        orm.error_message = job.error_message
+        orm.started_at = job.started_at
+        orm.finished_at = job.finished_at
+        self._session.flush()
+        return workflow_job_from_orm(orm)
+
+    def acquire_next_available_job(
+        self,
+        owner: str,
+        lease_duration_seconds: int = 300,
+        now: datetime | None = None,
+    ) -> WorkflowJob | None:
+        from datetime import UTC, timedelta
+        ts = now or datetime.now(UTC)
+
+        stmt = (
+            select(WorkflowJobORM)
+            .where(
+                (
+                    (WorkflowJobORM.status == JobStatus.QUEUED.value)
+                    & (WorkflowJobORM.available_at <= ts)
+                )
+                | (
+                    WorkflowJobORM.status.in_([JobStatus.LEASED.value, JobStatus.RUNNING.value])
+                    & (WorkflowJobORM.lease_expires_at != None)
+                    & (WorkflowJobORM.lease_expires_at <= ts)
+                )
+            )
+            .order_by(WorkflowJobORM.available_at.asc(), WorkflowJobORM.created_at.asc())
+            .limit(1)
+        )
+        orm = self._session.scalars(stmt).first()
+        if orm is None:
+            return None
+
+        orm.status = JobStatus.LEASED.value
+        orm.lease_owner = owner
+        orm.lease_expires_at = ts + timedelta(seconds=lease_duration_seconds)
+        orm.heartbeat_at = ts
+        self._session.flush()
+        return workflow_job_from_orm(orm)
+
+    def renew_lease(
+        self,
+        job_id: str,
+        owner: str,
+        extend_seconds: int = 300,
+        now: datetime | None = None,
+    ) -> WorkflowJob:
+        from datetime import UTC, timedelta
+        ts = now or datetime.now(UTC)
+        orm = self._session.get(WorkflowJobORM, job_id)
+        if orm is None:
+            raise ValueError(f"Job '{job_id}' not found")
+        if orm.lease_owner != owner:
+            raise WorkflowConflictError(
+                f"Cannot renew lease on job '{job_id}': held by '{orm.lease_owner}', not '{owner}'."
+            )
+        orm.lease_expires_at = ts + timedelta(seconds=extend_seconds)
+        orm.heartbeat_at = ts
+        self._session.flush()
+        return workflow_job_from_orm(orm)
+
+    def record_heartbeat(
+        self,
+        job_id: str,
+        owner: str,
+        now: datetime | None = None,
+    ) -> None:
+        from datetime import UTC
+        ts = now or datetime.now(UTC)
+        orm = self._session.get(WorkflowJobORM, job_id)
+        if orm is None:
+            raise ValueError(f"Job '{job_id}' not found")
+        if orm.lease_owner != owner:
+            raise WorkflowConflictError(
+                f"Cannot heartbeat job '{job_id}': held by '{orm.lease_owner}', not '{owner}'."
+            )
+        orm.heartbeat_at = ts
+        self._session.flush()
+
+    def recover_expired_leases(self, now: datetime | None = None) -> int:
+        from datetime import UTC
+        ts = now or datetime.now(UTC)
+        stmt = (
+            select(WorkflowJobORM)
+            .where(
+                WorkflowJobORM.status.in_([JobStatus.LEASED.value, JobStatus.RUNNING.value]),
+                WorkflowJobORM.lease_expires_at != None,
+                WorkflowJobORM.lease_expires_at <= ts,
+            )
+        )
+        expired_jobs = self._session.scalars(stmt).all()
+        count = len(expired_jobs)
+        for job_orm in expired_jobs:
+            job_orm.status = JobStatus.QUEUED.value
+            job_orm.lease_owner = None
+            job_orm.lease_expires_at = None
+        if count > 0:
+            self._session.flush()
+        return count
+
+
+class StageExecutionRepository:
+    """Repository for managing audit history of stage execution attempts."""
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def record_execution(self, execution: StageExecution) -> StageExecution:
+        orm = stage_execution_to_orm(execution)
+        self._session.add(orm)
+        self._session.flush()
+        return stage_execution_from_orm(orm)
+
+    def list_executions_for_task(self, task_id: str) -> list[StageExecution]:
+        stmt = (
+            select(StageExecutionORM)
+            .where(StageExecutionORM.task_id == task_id)
+            .order_by(StageExecutionORM.attempt_number.asc(), StageExecutionORM.started_at.asc())
+        )
+        return [stage_execution_from_orm(r) for r in self._session.scalars(stmt).all()]
+
+    def get_latest_execution_for_stage(self, task_id: str, stage: Stage) -> StageExecution | None:
+        stage_val = stage.value if hasattr(stage, "value") else str(stage)
+        stmt = (
+            select(StageExecutionORM)
+            .where(
+                StageExecutionORM.task_id == task_id,
+                StageExecutionORM.stage == stage_val,
+            )
+            .order_by(StageExecutionORM.attempt_number.desc())
+            .limit(1)
+        )
+        orm = self._session.scalars(stmt).first()
+        return stage_execution_from_orm(orm) if orm is not None else None
+
+
+
+
+
+
+
 
 

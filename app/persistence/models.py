@@ -1007,3 +1007,103 @@ class BenchmarkComparisonReportORM(Base):
     )
 
 
+class KnowledgeVideoTaskORM(Base):
+    __tablename__ = "knowledge_video_tasks"
+
+    task_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    topic: Mapped[str] = mapped_column(String(500), nullable=False)
+    task_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    current_stage: Mapped[str] = mapped_column(String(32), nullable=False)
+    workflow_policy: Mapped[str] = mapped_column(String(32), nullable=False)
+    target_duration: Mapped[float] = mapped_column(Float, nullable=False, default=60.0)
+    aspect_ratio: Mapped[str] = mapped_column(String(16), nullable=False, default="16:9")
+    language: Mapped[str] = mapped_column(String(16), nullable=False, default="zh")
+    waiting_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    metadata_json: Mapped[dict] = mapped_column(EvidenceType, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index("ix_kv_tasks_status", "task_status"),
+        Index("ix_kv_tasks_current_stage", "current_stage"),
+        Index("ix_kv_tasks_created_at", "created_at"),
+    )
+
+
+class WorkflowJobORM(Base):
+    __tablename__ = "workflow_jobs"
+
+    job_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    task_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("knowledge_video_tasks.task_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    stage: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+    attempt_number: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    lease_owner: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    input_artifact_revision_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    output_artifact_revision_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    error_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index("ix_wf_jobs_task_id", "task_id"),
+        Index("ix_wf_jobs_stage", "stage"),
+        Index("ix_wf_jobs_status", "status"),
+        Index("ix_wf_jobs_lease_expires_at", "lease_expires_at"),
+        Index("ix_wf_jobs_idempotency_key", "idempotency_key"),
+    )
+
+
+class StageExecutionORM(Base):
+    __tablename__ = "stage_executions"
+
+    stage_execution_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    task_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("knowledge_video_tasks.task_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    job_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("workflow_jobs.job_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    stage: Mapped[str] = mapped_column(String(32), nullable=False)
+    attempt_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    input_artifact_revision_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    output_artifact_revision_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    error_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    duration_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index("ix_stage_exec_task_id", "task_id"),
+        Index("ix_stage_exec_job_id", "job_id"),
+        Index("ix_stage_exec_stage", "stage"),
+    )
+
+
+
+
+
+
+
+
+

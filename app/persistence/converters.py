@@ -7,9 +7,19 @@ from uuid import uuid4
 from app.domain.asset_router import AssetRoutePlan
 from app.domain.content_plan import ContentBeat, ContentPlanRevision
 from app.domain.enums import BeatType, StoryboardSnapshotState, VisualType
+from app.domain.knowledge_video_task import KnowledgeVideoTask
 from app.domain.shot import Shot, ShotRevision
+from app.domain.stage_execution import StageExecution
 from app.domain.storyboard import StoryboardSnapshot
 from app.domain.storyboard_approval import StoryboardApprovalRecord
+from app.domain.workflow_job import WorkflowJob
+from app.domain.workflow_state import (
+    JobErrorType,
+    JobStatus,
+    Stage,
+    TaskStatus,
+    WorkflowPolicyType,
+)
 from app.persistence.models import (
     AssetRoutePlanORM,
     AttemptRequestORM,
@@ -28,6 +38,7 @@ from app.persistence.models import (
     ExecutionAttemptORM,
     ExecutionRunORM,
     ExecutionTransitionORM,
+    KnowledgeVideoTaskORM,
     ProviderReceiptORM,
     QualityRemediationDecisionORM,
     ShotAssetVersionORM,
@@ -35,11 +46,13 @@ from app.persistence.models import (
     ShotORM,
     ShotQualitySelectionORM,
     ShotRevisionORM,
+    StageExecutionORM,
     StoryboardApprovalRecordORM,
     StoryboardSnapshotORM,
     StoryboardSnapshotShotRevisionORM,
     TraceEventORM,
     TraceRootORM,
+    WorkflowJobORM,
 )
 
 if TYPE_CHECKING:
@@ -1346,4 +1359,140 @@ def benchmark_comparison_report_from_orm(
         created_at=orm.created_at,
         source_fingerprint=orm.source_fingerprint,
     )
+
+
+def knowledge_video_task_to_orm(task: KnowledgeVideoTask) -> KnowledgeVideoTaskORM:
+    """Converts a domain KnowledgeVideoTask to a KnowledgeVideoTaskORM record."""
+    return KnowledgeVideoTaskORM(
+        task_id=task.task_id,
+        topic=task.topic,
+        task_status=task.task_status.value if hasattr(task.task_status, "value") else str(task.task_status),
+        current_stage=task.current_stage.value if hasattr(task.current_stage, "value") else str(task.current_stage),
+        workflow_policy=task.workflow_policy.value if hasattr(task.workflow_policy, "value") else str(task.workflow_policy),
+        target_duration=task.target_duration,
+        aspect_ratio=task.aspect_ratio,
+        language=task.language,
+        waiting_reason=task.waiting_reason,
+        error_type=task.error_type.value if (task.error_type and hasattr(task.error_type, "value")) else (str(task.error_type) if task.error_type else None),
+        error_message=task.error_message,
+        metadata_json=task.task_metadata,
+        created_at=task.created_at,
+        updated_at=task.updated_at,
+        finished_at=task.finished_at,
+    )
+
+
+def knowledge_video_task_from_orm(orm: KnowledgeVideoTaskORM) -> KnowledgeVideoTask:
+    """Reconstructs a domain KnowledgeVideoTask from a KnowledgeVideoTaskORM record."""
+    error_type = JobErrorType(orm.error_type) if orm.error_type else None
+    return KnowledgeVideoTask(
+        task_id=orm.task_id,
+        topic=orm.topic,
+        task_status=TaskStatus(orm.task_status),
+        current_stage=Stage(orm.current_stage),
+        workflow_policy=WorkflowPolicyType(orm.workflow_policy),
+        target_duration=orm.target_duration,
+        aspect_ratio=orm.aspect_ratio,
+        language=orm.language,
+        waiting_reason=orm.waiting_reason,
+        error_type=error_type,
+        error_message=orm.error_message,
+        task_metadata=orm.metadata_json or {},
+        created_at=orm.created_at,
+        updated_at=orm.updated_at,
+        finished_at=orm.finished_at,
+    )
+
+
+def workflow_job_to_orm(job: WorkflowJob) -> WorkflowJobORM:
+    """Converts a domain WorkflowJob to a WorkflowJobORM record."""
+    return WorkflowJobORM(
+        job_id=job.job_id,
+        task_id=job.task_id,
+        stage=job.stage.value if hasattr(job.stage, "value") else str(job.stage),
+        status=job.status.value if hasattr(job.status, "value") else str(job.status),
+        idempotency_key=job.idempotency_key,
+        attempt_number=job.attempt_number,
+        max_attempts=job.max_attempts,
+        available_at=job.available_at,
+        lease_owner=job.lease_owner,
+        lease_expires_at=job.lease_expires_at,
+        heartbeat_at=job.heartbeat_at,
+        input_artifact_revision_id=job.input_artifact_revision_id,
+        output_artifact_revision_id=job.output_artifact_revision_id,
+        error_type=job.error_type,
+        error_message=job.error_message,
+        created_at=job.created_at,
+        started_at=job.started_at,
+        finished_at=job.finished_at,
+    )
+
+
+def workflow_job_from_orm(orm: WorkflowJobORM) -> WorkflowJob:
+    """Reconstructs a domain WorkflowJob from a WorkflowJobORM record."""
+    return WorkflowJob(
+        job_id=orm.job_id,
+        task_id=orm.task_id,
+        stage=Stage(orm.stage),
+        status=JobStatus(orm.status),
+        idempotency_key=orm.idempotency_key,
+        attempt_number=orm.attempt_number,
+        max_attempts=orm.max_attempts,
+        available_at=orm.available_at,
+        lease_owner=orm.lease_owner,
+        lease_expires_at=orm.lease_expires_at,
+        heartbeat_at=orm.heartbeat_at,
+        input_artifact_revision_id=orm.input_artifact_revision_id,
+        output_artifact_revision_id=orm.output_artifact_revision_id,
+        error_type=orm.error_type,
+        error_message=orm.error_message,
+        created_at=orm.created_at,
+        started_at=orm.started_at,
+        finished_at=orm.finished_at,
+    )
+
+
+def stage_execution_to_orm(execution: StageExecution) -> StageExecutionORM:
+    """Converts a domain StageExecution to a StageExecutionORM record."""
+    return StageExecutionORM(
+        stage_execution_id=execution.stage_execution_id,
+        task_id=execution.task_id,
+        job_id=execution.job_id,
+        stage=execution.stage.value if hasattr(execution.stage, "value") else str(execution.stage),
+        attempt_number=execution.attempt_number,
+        status=execution.status,
+        input_artifact_revision_id=execution.input_artifact_revision_id,
+        output_artifact_revision_id=execution.output_artifact_revision_id,
+        error_type=execution.error_type,
+        error_message=execution.error_message,
+        duration_ms=execution.duration_ms,
+        started_at=execution.started_at,
+        finished_at=execution.finished_at,
+    )
+
+
+def stage_execution_from_orm(orm: StageExecutionORM) -> StageExecution:
+    """Reconstructs a domain StageExecution from a StageExecutionORM record."""
+    return StageExecution(
+        stage_execution_id=orm.stage_execution_id,
+        task_id=orm.task_id,
+        job_id=orm.job_id,
+        stage=Stage(orm.stage),
+        attempt_number=orm.attempt_number,
+        status=orm.status,
+        input_artifact_revision_id=orm.input_artifact_revision_id,
+        output_artifact_revision_id=orm.output_artifact_revision_id,
+        error_type=orm.error_type,
+        error_message=orm.error_message,
+        duration_ms=orm.duration_ms,
+        started_at=orm.started_at,
+        finished_at=orm.finished_at,
+    )
+
+
+
+
+
+
+
 
