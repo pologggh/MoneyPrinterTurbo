@@ -228,11 +228,11 @@ def test_production_registry_contains_no_fake_executors(session_factory):
         assert not executor.__class__.__name__.startswith(("Mock", "Fake", "Dummy"))
 
 
-def test_production_plan_remains_unsupported(session_factory):
+def test_audio_remains_unsupported(session_factory):
     registry = get_default_executor_registry(session_factory=session_factory)
-    assert not registry.has_executor(Stage.PRODUCTION_PLAN)
-    assert registry.get_executor(Stage.PRODUCTION_PLAN) is None
-    assert Stage.PRODUCTION_PLAN not in registry.list_supported_stages()
+    assert not registry.has_executor(Stage.AUDIO)
+    assert registry.get_executor(Stage.AUDIO) is None
+    assert Stage.AUDIO not in registry.list_supported_stages()
 
 
 # =============================================================================

@@ -273,11 +273,11 @@ def test_production_registry_contains_evidence_plan_script_and_no_mocks():
     assert registry.has_executor(Stage.SCRIPT)
     assert isinstance(registry.get_executor(Stage.SCRIPT), ScriptStageExecutor)
 
-    # PRODUCTION_PLAN and subsequent stages remain unsupported
-    assert not registry.has_executor(Stage.PRODUCTION_PLAN)
-    assert registry.get_executor(Stage.PRODUCTION_PLAN) is None
-    assert not registry.has_executor(Stage.ASSET)
+    # PRODUCTION_PLAN and ASSET are supported in P1; AUDIO and subsequent stages remain unsupported
+    assert registry.has_executor(Stage.PRODUCTION_PLAN)
+    assert registry.has_executor(Stage.ASSET)
     assert not registry.has_executor(Stage.AUDIO)
+    assert registry.get_executor(Stage.AUDIO) is None
 
 
 def test_unsupported_storyboard_remains_queued_in_default_registry(session_factory):
@@ -297,10 +297,12 @@ def test_unsupported_storyboard_remains_queued_in_default_registry(session_facto
         task.advance_stage(Stage.SCRIPT)
         task.advance_stage(Stage.STORYBOARD)
         task.advance_stage(Stage.PRODUCTION_PLAN)
+        task.advance_stage(Stage.ASSET)
+        task.advance_stage(Stage.AUDIO)
         job = WorkflowJob.create(
             task_id=task_id,
-            stage=Stage.PRODUCTION_PLAN,
-            idempotency_key=f"idemp_{task_id}_prod_plan_1",
+            stage=Stage.AUDIO,
+            idempotency_key=f"idemp_{task_id}_audio_1",
         )
         task_repo.save_task(task)
         job_repo.create_job(job)
@@ -322,7 +324,7 @@ def test_unsupported_storyboard_remains_queued_in_default_registry(session_facto
 
         assert cur_job.status == JobStatus.QUEUED
         assert cur_job.lease_owner is None
-        assert cur_task.current_stage == Stage.PRODUCTION_PLAN
+        assert cur_task.current_stage == Stage.AUDIO
 
 
 # =============================================================================
