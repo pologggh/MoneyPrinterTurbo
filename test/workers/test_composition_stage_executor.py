@@ -3,7 +3,7 @@ Comprehensive test suite for Stage C1: Composition Stage Integration.
 
 Verifies:
 1. Stage.COMPOSITION is registered in default executor registry.
-2. Stage.QUALITY_REVIEW remains unregistered and unsupported.
+2. Stage.QUALITY_REVIEW and DELIVERY are registered in the completed workflow.
 3. CompositionStageExecutor consumes:
    - AudioOutput (from Stage.AUDIO)
    - COMPLETED ExecutionRun (from Stage.ASSET)
@@ -15,7 +15,7 @@ Verifies:
 8. Immutability of CompositionOutput (re-render creates new version, old remains untouched).
 9. Failure safety (atomic promotion: temp files not promoted on error, bounded error metadata).
 10. Long-running render heartbeat during execution.
-11. End-to-end StageWorker workflow progression advancing from COMPOSITION to QUALITY_REVIEW (queued, unsupported).
+11. StageWorker workflow progression from COMPOSITION to a queued QUALITY_REVIEW job.
 12. Zero formal quality review or evaluation in C1.
 """
 
@@ -377,15 +377,14 @@ def _setup_full_prerequisites(session_factory, tmp_path, shot_count: int = 2):
 
 
 def test_composition_stage_executor_registered_in_default_registry():
-    """Verify Stage.COMPOSITION and QUALITY_REVIEW are registered, and Stage.DELIVERY remains unregistered."""
+    """Verify COMPOSITION through DELIVERY are registered."""
     registry = get_default_executor_registry()
     assert registry.has_executor(Stage.COMPOSITION)
     assert isinstance(registry.get_executor(Stage.COMPOSITION), CompositionStageExecutor)
     assert registry.has_executor(Stage.QUALITY_REVIEW)
 
-    # Downstream boundary: DELIVERY must remain unsupported
-    assert not registry.has_executor(Stage.DELIVERY)
-    assert registry.get_executor(Stage.DELIVERY) is None
+    assert registry.has_executor(Stage.DELIVERY)
+    assert registry.get_executor(Stage.DELIVERY) is not None
 
 
 # =============================================================================
@@ -907,7 +906,7 @@ def test_mandatory_stageworker_advances_composition_to_queued_quality_review(ses
     3. Persists CompositionOutput and TaskArtifactRef(COMPOSITION_OUTPUT).
     4. Completes COMPOSITION job.
     5. KnowledgeVideoWorkflow creates next job: WorkflowJob(stage=QUALITY_REVIEW).
-    6. Stage.QUALITY_REVIEW remains unsupported in default registry and stays safely QUEUED.
+    6. A deliberately restricted registry leaves QUALITY_REVIEW safely QUEUED.
     """
     task, job, audio_out, run, snapshot, aud_ref = _setup_full_prerequisites(session_factory, tmp_path)
 

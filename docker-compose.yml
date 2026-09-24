@@ -1,6 +1,9 @@
 x-common-volumes: &common-volumes
   - ./:/MoneyPrinterTurbo
 
+x-common-environment: &common-environment
+  DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://postgres:postgres@db:5432/moneyprinterturbo}
+
 services:
   webui:
     build:
@@ -11,6 +14,10 @@ services:
       - "127.0.0.1:8501:8501"
     command: [ "streamlit", "run", "./webui/Main.py", "--server.address=0.0.0.0", "--server.port=8501", "--browser.serverAddress=127.0.0.1", "--server.enableCORS=True", "--browser.gatherUsageStats=False", "--client.toolbarMode=minimal", "--logger.hideWelcomeMessage=True", "--server.showEmailPrompt=False" ]
     volumes: *common-volumes
+    environment: *common-environment
+    depends_on:
+      db:
+        condition: service_healthy
     restart: always
   api:
     build:
@@ -21,4 +28,40 @@ services:
       - "127.0.0.1:8080:8080"
     command: [ "python3", "main.py" ]
     volumes: *common-volumes
+    environment: *common-environment
+    depends_on:
+      db:
+        condition: service_healthy
     restart: always
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: "moneyprinterturbo-worker"
+    command: [ "python3", "-m", "app.workers.stage_worker" ]
+    volumes: *common-volumes
+    environment: *common-environment
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: always
+  db:
+    image: postgres:16-alpine
+    container_name: "moneyprinterturbo-postgres"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-moneyprinterturbo}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-moneyprinterturbo}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

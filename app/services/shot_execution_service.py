@@ -48,8 +48,11 @@ class ShotExecutionService:
         policy: ExecutionRetryPolicy | None = None,
         session_factory: Any | None = None,
     ):
-        self._adapter_registry = adapter_registry or AdapterRegistry()
         self._session_factory = session_factory
+        if adapter_registry is not None:
+            self._adapter_registry = adapter_registry
+        else:
+            self._adapter_registry = AdapterRegistry(session_factory=session_factory)
         if policy is not None:
             self._policy = policy
         else:
@@ -72,16 +75,6 @@ class ShotExecutionService:
         trace_writer: Any | None = None,
         session_factory: Any | None = None,
     ) -> tuple[ShotExecution, list[ExecutionAttempt], ShotAssetVersion | None]:
-        # 1. Guard against blind re-submission if outcome is unknown / needs recovery
-        if shot_execution.status in (
-            ShotExecutionStatus.NEEDS_RECOVERY,
-            ShotExecutionStatus.SUBMISSION_OUTCOME_UNKNOWN,
-        ):
-            raise BlindSubmissionForbiddenError(
-                f"Shot {shot_execution.shot_id} has {shot_execution.status.value} status. "
-                "Blind re-submission is strictly forbidden to prevent duplicate billing."
-            )
-
         storage_path = Path(storage_base_dir).resolve() / "shot_assets" / shot_execution.shot_id
         storage_path.mkdir(parents=True, exist_ok=True)
 
@@ -111,6 +104,57 @@ class ShotExecutionService:
         if str(model_mode).upper() == "PINNED":
             candidates = candidates[:1]
 
+        # Recovery may resume only when durable evidence proves that the exact
+        # prior request can be submitted again with the same idempotency key.
+        if shot_execution.status in (
+            ShotExecutionStatus.NEEDS_RECOVERY,
+            ShotExecutionStatus.SUBMISSION_OUTCOME_UNKNOWN,
+        ):
+            active_sf = session_factory or self._session_factory
+            selected = candidates[shot_execution.current_candidate_index]
+            prior_attempt = None
+            prior_request = None
+            prior_receipt = None
+            if active_sf is not None and shot_execution.attempt_ids:
+                from app.persistence.repositories import ExecutionRepository
+                from app.persistence.session import get_session
+
+                with get_session(active_sf) as sess:
+                    repo = ExecutionRepository(sess)
+                    prior_attempt_id = shot_execution.attempt_ids[-1]
+                    prior_attempt = repo.get_execution_attempt(prior_attempt_id)
+                    prior_request = repo.get_attempt_request(prior_attempt_id)
+                    prior_receipt = repo.get_provider_receipt(prior_attempt_id)
+
+            can_resume_same_key = bool(
+                prior_attempt is not None
+                and prior_request is not None
+                and prior_receipt is None
+                and prior_request.provider == selected.provider
+                and prior_attempt.status in (
+                    ExecutionAttemptStatus.SUBMITTING,
+                    ExecutionAttemptStatus.SUBMISSION_OUTCOME_UNKNOWN,
+                )
+                and self._adapter_registry.has_adapter(selected.provider)
+                and self._adapter_registry.get_adapter(selected.provider)
+                .get_capabilities()
+                .supports_safe_resubmission_with_same_key
+            )
+            if not can_resume_same_key:
+                raise BlindSubmissionForbiddenError(
+                    "Blind re-submission is strictly forbidden: "
+                    f"shot {shot_execution.shot_id} has {shot_execution.status.value} status "
+                    "without durable proof of safe same-key resubmission."
+                )
+            shot_execution = shot_execution.model_copy(
+                update={
+                    "status": ShotExecutionStatus.PENDING,
+                    "error_code": None,
+                    "error_message": None,
+                    "finished_at": None,
+                }
+            )
+
         executed_attempts: list[ExecutionAttempt] = []
         current_idx = shot_execution.current_candidate_index
         current_exec = shot_execution.mark_running()
@@ -130,7 +174,7 @@ class ShotExecutionService:
                     f"Available providers: {available_providers}"
                 )
                 logger.warning(err_msg)
-                attempt_num = len(executed_attempts) + 1
+                attempt_num = len(current_exec.attempt_ids) + 1
                 failed_att = ExecutionAttempt(
                     execution_run_id=current_exec.execution_run_id,
                     shot_id=current_exec.shot_id,
@@ -176,8 +220,68 @@ class ShotExecutionService:
 
             while True:
                 candidate_attempts += 1
-                attempt_num = len(executed_attempts) + 1
-                idempotency_key = f"idemp_{current_exec.shot_id}_{attempt_num}_{uuid4().hex[:8]}"
+                attempt_num = len(current_exec.attempt_ids) + 1
+                active_sf = session_factory or self._session_factory
+
+                # Check if an AttemptRequest already exists for this shot and candidate attempt to reuse idempotency_key
+                existing_req = None
+                existing_attempt = None
+                existing_receipt = None
+                if active_sf and current_exec.attempt_ids:
+                    try:
+                        from app.persistence.repositories import ExecutionRepository
+                        from app.persistence.session import get_session
+
+                        with get_session(active_sf) as sess:
+                            repo = ExecutionRepository(sess)
+                            last_attempt_id = current_exec.attempt_ids[-1]
+                            attempts_completed_in_this_call = {
+                                item.execution_attempt_id for item in executed_attempts
+                            }
+                            if last_attempt_id not in attempts_completed_in_this_call:
+                                existing_attempt = repo.get_execution_attempt(last_attempt_id)
+                                if existing_attempt is not None and existing_attempt.status in (
+                                    ExecutionAttemptStatus.SUBMITTING,
+                                    ExecutionAttemptStatus.ACCEPTED,
+                                    ExecutionAttemptStatus.RUNNING,
+                                    ExecutionAttemptStatus.SUBMISSION_OUTCOME_UNKNOWN,
+                                ):
+                                    existing_req = repo.get_attempt_request(last_attempt_id)
+                                    existing_receipt = repo.get_provider_receipt(last_attempt_id)
+                    except Exception as recovery_lookup_exc:
+                        logger.error(
+                            f"Failed to inspect prior provider attempt for shot "
+                            f"'{current_exec.shot_id}': {recovery_lookup_exc}"
+                        )
+                        raise
+
+                caps = adapter.get_capabilities()
+                if existing_req is not None and existing_req.provider == candidate.provider:
+                    # An unresolved submission exists for this provider
+                    if existing_receipt is not None:
+                        needs_rec_exec = current_exec.mark_submission_unknown(
+                            error_code="PROVIDER_RECEIPT_REQUIRES_RECOVERY",
+                            error_message=(
+                                f"Provider '{candidate.provider}' already accepted the request; "
+                                "recover the recorded provider job instead of resubmitting"
+                            ),
+                            remote_task_id=existing_receipt.provider_job_id,
+                            attempt_id=existing_attempt.execution_attempt_id,
+                        )
+                        return needs_rec_exec, executed_attempts, None
+                    if not caps.supports_safe_resubmission_with_same_key:
+                        logger.warning(
+                            f"Provider '{candidate.provider}' does not support safe resubmission with same key for shot '{current_exec.shot_id}'. "
+                            "Halting in NEEDS_RECOVERY to prevent duplicate billing."
+                        )
+                        needs_rec_exec = current_exec.mark_submission_unknown(
+                            error_code="PROVIDER_RECOVERY_NOT_SUPPORTED",
+                            error_message=f"Provider '{candidate.provider}' does not support safe resubmission with same key",
+                        )
+                        return needs_rec_exec, executed_attempts, None
+                    idempotency_key = existing_req.idempotency_key
+                else:
+                    idempotency_key = f"idemp_{current_exec.shot_id}_{attempt_num}_{uuid4().hex[:8]}"
 
                 attempt = ExecutionAttempt(
                     execution_run_id=current_exec.execution_run_id,
@@ -212,8 +316,7 @@ class ShotExecutionService:
                 submitting_attempt = attempt.mark_submitting()
                 current_exec = current_exec.record_attempt(submitting_attempt.execution_attempt_id)
 
-                # Persist ExecutionAttempt and AttemptRequest in the SAME short transaction BEFORE submitting
-                active_sf = session_factory or self._session_factory
+                # Persist ExecutionAttempt, AttemptRequest, and updated ShotExecution in the SAME short transaction BEFORE submitting
                 try:
                     from app.persistence.repositories import ExecutionRepository
                     from app.persistence.session import get_session
@@ -222,6 +325,7 @@ class ShotExecutionService:
                         repo = ExecutionRepository(sess)
                         repo.save_or_update_execution_attempt(submitting_attempt)
                         repo.save_attempt_request(_attempt_req)
+                        repo.update_shot_execution(current_exec)
                 except Exception as persist_exc:
                     logger.error(
                         f"Pre-submission persistence failed for shot '{current_exec.shot_id}', "
@@ -271,38 +375,77 @@ class ShotExecutionService:
                         request, candidate, storage_path, idempotency_key=idempotency_key
                     )
                 except Exception as sub_exc:  # noqa: BLE001
-                    logger.exception(
-                        f"Unexpected exception calling adapter.submit for provider {candidate.provider}: {sub_exc}"
+                    logger.warning(
+                        f"Transport/unexpected exception calling adapter.submit for provider {candidate.provider}: {sub_exc}. "
+                        "Treating outcome as ambiguous (SUBMISSION_OUTCOME_UNKNOWN) to avoid duplicate billing."
                     )
                     submission_result = AdapterExecutionResult(
-                        outcome_type=ProviderOutcomeType.DEFINITIVE_TECHNICAL_FAILURE,
-                        error_code="UNEXPECTED_SUBMISSION_EXCEPTION",
-                        error_message=f"Adapter execution crashed with exception: {sub_exc}",
+                        outcome_type=ProviderOutcomeType.SUBMISSION_OUTCOME_UNKNOWN,
+                        error_code="SUBMISSION_TRANSPORT_ERROR",
+                        error_message=f"Ambiguous submission outcome due to transport/connection exception: {sub_exc}",
                     )
 
-                # Handle async ProviderReceipt returned directly
+                # Handle async ProviderReceipt or task ID returned directly
                 receipt: ProviderReceipt | None = None
                 if isinstance(submission_result, ProviderReceipt):
-                    receipt = submission_result
+                    receipt = submission_result.model_copy(
+                        update={
+                            "execution_attempt_id": submitting_attempt.execution_attempt_id,
+                            "provider": candidate.provider,
+                        }
+                    )
                     running_attempt = submitting_attempt.mark_accepted(receipt).mark_running()
-                    # Query initial status for the async job
-                    adapter_result = adapter.get_status(receipt.provider_job_id, storage_path)
                 else:
                     adapter_result = submission_result
-                    if adapter_result.remote_task_id:
+                    if getattr(adapter_result, "remote_task_id", None):
                         receipt = ProviderReceipt(
                             execution_attempt_id=submitting_attempt.execution_attempt_id,
                             provider=candidate.provider,
                             provider_job_id=adapter_result.remote_task_id,
-                            provider_status=adapter_result.status or "submitted",
-                            sanitized_metadata=adapter_result.raw_response or {},
+                            provider_status=getattr(adapter_result, "status", None) or "submitted",
+                            sanitized_metadata=getattr(adapter_result, "raw_response", None) or {},
                         )
                         running_attempt = submitting_attempt.mark_accepted(receipt).mark_running()
                     else:
                         running_attempt = submitting_attempt.mark_running()
 
+                # PERSIST RECEIPT AND ACCEPTED ATTEMPT IMMEDIATELY BEFORE ANY GET_STATUS, DOWNLOAD, OR PROBE
+                if receipt is not None:
+                    current_exec = current_exec.model_copy(
+                        update={"unconfirmed_remote_task_id": receipt.provider_job_id}
+                    )
+                    try:
+                        with get_session(active_sf) as sess:
+                            repo = ExecutionRepository(sess)
+                            repo.save_provider_receipt(receipt)
+                            repo.save_or_update_execution_attempt(running_attempt)
+                            repo.update_shot_execution(current_exec)
+                    except Exception as persist_receipt_exc:
+                        logger.error(
+                            f"Failed to persist provider receipt for attempt {submitting_attempt.execution_attempt_id}: {persist_receipt_exc}"
+                        )
+                        raise
+
+                # Query initial status for the async job only if receipt was returned directly
+                if isinstance(submission_result, ProviderReceipt):
+                    try:
+                        adapter_result = adapter.get_status(receipt.provider_job_id, storage_path)
+                    except Exception as status_exc:
+                        logger.warning(
+                            f"Status query failed for async job {receipt.provider_job_id}: {status_exc}"
+                        )
+                        adapter_result = AdapterExecutionResult(
+                            outcome_type=ProviderOutcomeType.SUBMISSION_OUTCOME_UNKNOWN,
+                            remote_task_id=receipt.provider_job_id,
+                            error_code="STATUS_QUERY_FAILED",
+                            error_message=str(status_exc),
+                        )
+
                 # If async job returned and still RUNNING, return running status
-                if adapter_result.status == "RUNNING":
+                if (
+                    adapter_result.outcome_type == ProviderOutcomeType.SUCCESS
+                    and getattr(adapter_result, "status", None) == "RUNNING"
+                ):
                     executed_attempts.append(running_attempt)
                     return current_exec, executed_attempts, None
 
@@ -507,6 +650,16 @@ class ShotExecutionService:
                             },
                             error_code="SUBMISSION_OUTCOME_UNKNOWN",
                             parent_event_id=attempt_start_ev.trace_event_id if attempt_start_ev else None,
+                        )
+
+                    try:
+                        with get_session(active_sf) as sess:
+                            repo = ExecutionRepository(sess)
+                            repo.save_or_update_execution_attempt(unknown_attempt)
+                            repo.update_shot_execution(needs_recovery_exec)
+                    except Exception as persist_unknown_exc:
+                        logger.error(
+                            f"Failed to persist unknown submission state for shot '{current_exec.shot_id}': {persist_unknown_exc}"
                         )
 
                     return needs_recovery_exec, executed_attempts, None

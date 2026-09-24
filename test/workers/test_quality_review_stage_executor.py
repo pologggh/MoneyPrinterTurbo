@@ -637,7 +637,7 @@ def _setup_quality_review_prerequisites(
 # =============================================================================
 
 def test_registry_registration_and_boundaries():
-    """Verify Stage.QUALITY_REVIEW is registered with real QualityReviewStageExecutor, and Stage.DELIVERY remains unsupported."""
+    """Verify QUALITY_REVIEW and DELIVERY use real production executors."""
     registry = get_default_executor_registry()
     assert registry.has_executor(Stage.QUALITY_REVIEW)
     executor = registry.get_executor(Stage.QUALITY_REVIEW)
@@ -645,9 +645,8 @@ def test_registry_registration_and_boundaries():
     assert isinstance(executor, QualityReviewStageExecutor)
     assert not executor.__class__.__name__.startswith(("Mock", "Fake", "Dummy"))
 
-    # Stage.DELIVERY must remain unsupported in Stage Q1
-    assert not registry.has_executor(Stage.DELIVERY)
-    assert registry.get_executor(Stage.DELIVERY) is None
+    assert registry.has_executor(Stage.DELIVERY)
+    assert registry.get_executor(Stage.DELIVERY) is not None
 
 
 # =============================================================================
@@ -696,7 +695,7 @@ def test_mandatory_pass_auto_mode(session_factory, tmp_path):
     - Produces TaskArtifactRef(EVALUATION_SNAPSHOT).
     - Advances stage to Stage.DELIVERY.
     - Creates WorkflowJob(stage=Stage.DELIVERY) in QUEUED state.
-    - Confirms DELIVERY job remains queued and unsupported by production StageWorker.
+    - Confirms the production StageWorker executes DELIVERY and completes the task.
     """
     task, job, comp_out, run, snapshot, comp_ref, ev_snap = _setup_quality_review_prerequisites(
         session_factory, tmp_path, workflow_policy=WorkflowPolicyType.AUTO
@@ -737,13 +736,23 @@ def test_mandatory_pass_auto_mode(session_factory, tmp_path):
         assert len(del_jobs) == 1
         assert del_jobs[0].status == JobStatus.QUEUED
 
-    # Confirms DELIVERY job remains queued and unsupported by default production StageWorker
+    # The completed production registry executes DELIVERY.
     prod_worker = StageWorker(
         session_factory=session_factory,
         registry=get_default_executor_registry(session_factory=session_factory),
         worker_id="prod-worker-del",
     )
-    assert prod_worker.run_once() is False
+    assert prod_worker.run_once() is True
+    with session_factory() as session:
+        t_repo = KnowledgeVideoTaskRepository(session)
+        j_repo = WorkflowJobRepository(session)
+        completed_task = t_repo.get_task(task.task_id)
+        delivery_jobs = [
+            item for item in j_repo.list_jobs_for_task(task.task_id)
+            if item.stage == Stage.DELIVERY
+        ]
+        assert completed_task.task_status == TaskStatus.COMPLETED
+        assert delivery_jobs[0].status == JobStatus.SUCCEEDED
 
 
 def test_mandatory_pass_review_mode(session_factory, tmp_path):

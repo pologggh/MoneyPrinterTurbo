@@ -3,7 +3,7 @@ Comprehensive test suite for Stage A1: Audio Stage Integration.
 
 Verifies:
 - Stage.AUDIO is registered in default executor registry.
-- Stage.COMPOSITION remains unregistered and unsupported.
+- Stage.COMPOSITION through DELIVERY are registered in the default registry.
 - AudioStageExecutor consumes:
   - ExecutionRun (must be COMPLETED)
   - approved StoryboardSnapshot
@@ -15,7 +15,7 @@ Verifies:
 - Optional background music handling (volume 0 / None skips BGM cleanly; enabled resolves file).
 - Persistence of immutable AudioOutput record and TaskArtifactRef(AUDIO_OUTPUT).
 - Clean handling of input errors (missing ref, task mismatch, unapproved storyboard, incomplete execution run).
-- Full StageWorker integration advancing from AUDIO to COMPOSITION (queued, unsupported).
+- StageWorker integration advancing from AUDIO to a queued COMPOSITION job.
 - Zero paid API / external network calls (all TTS synthesized via injected test doubles).
 """
 
@@ -348,17 +348,16 @@ def setup_complete_upstream_pipeline(session, task_id: str, tmp_path: Path, targ
 # Registry Verification
 # =============================================================================
 
-def test_registry_contains_audio_executor_and_leaves_delivery_unsupported():
-    """Verify default registry includes Stage.AUDIO, COMPOSITION, and QUALITY_REVIEW while DELIVERY remains unsupported."""
+def test_registry_contains_audio_through_delivery_executors():
+    """Verify the completed default registry includes AUDIO through DELIVERY."""
     registry = get_default_executor_registry()
     assert registry.has_executor(Stage.AUDIO)
     assert isinstance(registry.get_executor(Stage.AUDIO), AudioStageExecutor)
     assert registry.has_executor(Stage.COMPOSITION)
     assert registry.has_executor(Stage.QUALITY_REVIEW)
 
-    # Stage.DELIVERY remains unregistered
-    assert not registry.has_executor(Stage.DELIVERY)
-    assert registry.get_executor(Stage.DELIVERY) is None
+    assert registry.has_executor(Stage.DELIVERY)
+    assert registry.get_executor(Stage.DELIVERY) is not None
 
 
 # =============================================================================
@@ -853,12 +852,11 @@ def test_stage_worker_end_to_end_advancement_to_composition(session_factory, tmp
     5. Because Stage.COMPOSITION is unsupported in registry, the job stays safely QUEUED and unacquired.
     """
     task_id = f"task_{uuid4().hex[:8]}"
-    now = datetime(2026, 9, 12, 12, 0, 0, tzinfo=UTC)
-
     with session_factory() as session:
         data = setup_complete_upstream_pipeline(session, task_id, tmp_path, target_duration=30.0)
         task = data["task"]
         job = data["job"]
+    now = datetime.now(UTC)
 
     # Build custom registry injecting mock TTS for tests
     audio_executor = AudioStageExecutor(

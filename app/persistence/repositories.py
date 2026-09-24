@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any, Sequence
 
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session, selectinload
 
 from app.domain.asset_execution import (
@@ -30,7 +30,9 @@ from app.domain.plan_diff import validate_content_plan_revision_lineages
 from app.domain.evidence import (
     EvidenceItem,
     EvidenceSnapshot,
+    KnowledgeChunk,
     KnowledgeClaim,
+    RetrievalSnapshot,
     SourceDocument,
     WebResearchSnapshot,
 )
@@ -696,7 +698,13 @@ class ExecutionRepository:
         return attempt_request_from_orm(orm_req)
 
     def save_provider_receipt(self, receipt: ProviderReceipt) -> ProviderReceipt:
-        """Persists a new ProviderReceipt."""
+        """Persists a new ProviderReceipt, returning existing if already saved."""
+        stmt = select(ProviderReceiptORM).where(
+            ProviderReceiptORM.execution_attempt_id == receipt.execution_attempt_id
+        )
+        existing = self._session.scalars(stmt).first()
+        if existing is not None:
+            return provider_receipt_from_orm(existing)
         orm_receipt = provider_receipt_to_orm(receipt)
         self._session.add(orm_receipt)
         self._session.flush()
@@ -1426,6 +1434,7 @@ class WorkflowJobRepository:
             .where(*conditions)
             .order_by(WorkflowJobORM.available_at.asc(), WorkflowJobORM.created_at.asc())
             .limit(1)
+            .with_for_update(skip_locked=True)
         )
         orm = self._session.scalars(stmt).first()
         if orm is None:
@@ -1454,6 +1463,21 @@ class WorkflowJobRepository:
             raise WorkflowConflictError(
                 f"Cannot renew lease on job '{job_id}': held by '{orm.lease_owner}', not '{owner}'."
             )
+        if orm.status not in (JobStatus.LEASED.value, JobStatus.RUNNING.value):
+            raise WorkflowConflictError(
+                f"Cannot renew lease on job '{job_id}': status is '{orm.status}', expected LEASED/RUNNING."
+            )
+        if orm.lease_expires_at is not None:
+            exp_at = orm.lease_expires_at
+            cur_ts = ts
+            if exp_at.tzinfo is None and cur_ts.tzinfo is not None:
+                exp_at = exp_at.replace(tzinfo=UTC)
+            elif exp_at.tzinfo is not None and cur_ts.tzinfo is None:
+                cur_ts = cur_ts.replace(tzinfo=UTC)
+            if exp_at < cur_ts:
+                raise WorkflowConflictError(
+                    f"Cannot renew lease on job '{job_id}': lease expired at {orm.lease_expires_at}."
+                )
         orm.lease_expires_at = ts + timedelta(seconds=extend_seconds)
         orm.heartbeat_at = ts
         self._session.flush()
@@ -1474,8 +1498,100 @@ class WorkflowJobRepository:
             raise WorkflowConflictError(
                 f"Cannot heartbeat job '{job_id}': held by '{orm.lease_owner}', not '{owner}'."
             )
+        if orm.status not in (JobStatus.LEASED.value, JobStatus.RUNNING.value):
+            raise WorkflowConflictError(
+                f"Cannot heartbeat job '{job_id}': status is '{orm.status}', expected LEASED/RUNNING."
+            )
         orm.heartbeat_at = ts
         self._session.flush()
+
+    def update_job_fenced(
+        self,
+        job: WorkflowJob,
+        owner: str,
+        now: datetime | None = None,
+    ) -> WorkflowJob:
+        """
+        Updates a WorkflowJob while verifying current lease ownership,
+        executable state, and lease validity.
+        Rejects stale, superseded, or expired writes.
+        """
+        from datetime import UTC
+        ts = now or datetime.now(UTC)
+        values = {
+            "status": job.status.value if hasattr(job.status, "value") else str(job.status),
+            "stage": job.stage.value if hasattr(job.stage, "value") else str(job.stage),
+            "attempt_number": job.attempt_number,
+            "max_attempts": job.max_attempts,
+            "available_at": job.available_at,
+            "lease_owner": job.lease_owner,
+            "lease_expires_at": job.lease_expires_at,
+            "heartbeat_at": job.heartbeat_at,
+            "input_task_artifact_ref_id": job.input_task_artifact_ref_id,
+            "output_task_artifact_ref_id": job.output_task_artifact_ref_id,
+            "input_artifact_revision_id": job.input_artifact_revision_id,
+            "output_artifact_revision_id": job.output_artifact_revision_id,
+            "error_type": job.error_type,
+            "error_message": job.error_message,
+            "started_at": job.started_at,
+            "finished_at": job.finished_at,
+        }
+        stmt = (
+            update(WorkflowJobORM)
+            .where(
+                WorkflowJobORM.job_id == job.job_id,
+                WorkflowJobORM.lease_owner == owner,
+                WorkflowJobORM.status.in_([JobStatus.LEASED.value, JobStatus.RUNNING.value]),
+                (
+                    WorkflowJobORM.lease_expires_at.is_(None)
+                    | (WorkflowJobORM.lease_expires_at >= ts)
+                ),
+            )
+            .values(**values)
+            .execution_options(synchronize_session=False)
+        )
+        result = self._session.execute(stmt)
+        if result.rowcount != 1:
+            current = self._session.scalar(
+                select(WorkflowJobORM)
+                .where(WorkflowJobORM.job_id == job.job_id)
+                .execution_options(populate_existing=True)
+            )
+            if current is None:
+                raise ValueError(f"Job '{job.job_id}' not found")
+            if current.lease_owner != owner:
+                raise WorkflowConflictError(
+                    f"Fenced update rejected for job '{job.job_id}': lease held by "
+                    f"'{current.lease_owner}', expected '{owner}'."
+                )
+            if current.status not in (JobStatus.LEASED.value, JobStatus.RUNNING.value):
+                raise WorkflowConflictError(
+                    f"Fenced update rejected for job '{job.job_id}': status is "
+                    f"'{current.status}', expected LEASED/RUNNING."
+                )
+            if current.lease_expires_at is not None:
+                expires_at = current.lease_expires_at
+                compare_ts = ts
+                if expires_at.tzinfo is None and compare_ts.tzinfo is not None:
+                    expires_at = expires_at.replace(tzinfo=UTC)
+                elif expires_at.tzinfo is not None and compare_ts.tzinfo is None:
+                    compare_ts = compare_ts.replace(tzinfo=UTC)
+                if expires_at < compare_ts:
+                    raise WorkflowConflictError(
+                        f"Fenced update rejected for job '{job.job_id}': lease expired "
+                        f"at {current.lease_expires_at} (now: {ts})."
+                    )
+            raise WorkflowConflictError(
+                f"Fenced update rejected for job '{job.job_id}': current lease owner "
+                f"is '{current.lease_owner}', status is '{current.status}', and lease "
+                f"expires at '{current.lease_expires_at}'."
+            )
+
+        self._session.expire_all()
+        orm = self._session.get(WorkflowJobORM, job.job_id)
+        if orm is None:  # Defensive: the conditional UPDATE proved it existed.
+            raise ValueError(f"Job '{job.job_id}' not found after fenced update")
+        return workflow_job_from_orm(orm)
 
     def recover_expired_leases(self, now: datetime | None = None) -> int:
         from datetime import UTC
@@ -1966,6 +2082,11 @@ class EvidenceRepository:
         )
         return [retrieval_snapshot_from_orm(r) for r in self._session.scalars(stmt).all()]
 
+    def get_latest_retrieval_snapshot_for_task(self, task_id: str) -> Any | None:
+        """Loads the most recent RetrievalSnapshot for the task."""
+        snaps = self.list_retrieval_snapshots_for_task(task_id)
+        return snaps[0] if snaps else None
+
     def save_web_research_snapshot(self, snapshot: WebResearchSnapshot) -> WebResearchSnapshot:
         """Persists an immutable WebResearchSnapshot record."""
         from app.persistence.converters import web_research_snapshot_from_orm, web_research_snapshot_to_orm
@@ -2227,4 +2348,293 @@ class DeliveryManifestRepository:
         return delivery_manifest_from_orm(orm) if orm is not None else None
 
 
+class KnowledgeBaseRepository:
+    """Repository for managing Knowledge Bases, their sources, and task attachments."""
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def save_knowledge_base(self, kb: Any) -> Any:
+        """Persists or updates a domain KnowledgeBase."""
+        from app.persistence.converters import (
+            knowledge_base_from_orm,
+            knowledge_base_to_orm,
+        )
+        from app.persistence.models import KnowledgeBaseORM
+
+        orm = self._session.get(KnowledgeBaseORM, kb.knowledge_base_id)
+        if orm is None:
+            orm = knowledge_base_to_orm(kb)
+            self._session.add(orm)
+        else:
+            orm.name = kb.name
+            orm.description = kb.description
+            orm.status = kb.status.value if hasattr(kb.status, "value") else str(kb.status)
+            orm.metadata_json = dict(kb.metadata_json or {})
+            orm.updated_at = kb.updated_at
+        self._session.flush()
+        return knowledge_base_from_orm(orm)
+
+    def get_knowledge_base(self, kb_id: str) -> Any | None:
+        """Retrieves a KnowledgeBase by ID."""
+        from app.persistence.converters import knowledge_base_from_orm
+        from app.persistence.models import KnowledgeBaseORM
+
+        orm = self._session.get(KnowledgeBaseORM, kb_id)
+        return knowledge_base_from_orm(orm) if orm is not None else None
+
+    def list_knowledge_bases(self, status: str | None = None) -> list[Any]:
+        """Lists Knowledge Bases, optionally filtered by status."""
+        from app.persistence.converters import knowledge_base_from_orm
+        from app.persistence.models import KnowledgeBaseORM
+
+        stmt = select(KnowledgeBaseORM)
+        if status is not None:
+            stmt = stmt.where(KnowledgeBaseORM.status == status)
+        stmt = stmt.order_by(KnowledgeBaseORM.created_at.desc())
+        return [knowledge_base_from_orm(r) for r in self._session.scalars(stmt).all()]
+
+    def archive_knowledge_base(self, kb_id: str) -> None:
+        """Soft-deletes / archives a Knowledge Base."""
+        from app.domain.knowledge_base import KnowledgeBaseStatus
+        from app.persistence.models import KnowledgeBaseORM
+
+        orm = self._session.get(KnowledgeBaseORM, kb_id)
+        if orm is not None:
+            orm.status = KnowledgeBaseStatus.ARCHIVED.value
+            orm.updated_at = datetime.now(UTC)
+            self._session.flush()
+
+    def associate_source(self, kb_id: str, source_doc_id: str) -> None:
+        """Associates a SourceDocument with a Knowledge Base."""
+        from app.persistence.models import KnowledgeBaseSourceORM
+
+        existing = self._session.get(KnowledgeBaseSourceORM, (kb_id, source_doc_id))
+        if existing is None:
+            orm = KnowledgeBaseSourceORM(
+                knowledge_base_id=kb_id,
+                source_document_id=source_doc_id,
+                associated_at=datetime.now(UTC),
+            )
+            self._session.add(orm)
+            self._session.flush()
+
+    def dissociate_source(self, kb_id: str, source_doc_id: str) -> None:
+        """Removes an association between a SourceDocument and a Knowledge Base."""
+        from app.persistence.models import KnowledgeBaseSourceORM
+
+        existing = self._session.get(KnowledgeBaseSourceORM, (kb_id, source_doc_id))
+        if existing is not None:
+            self._session.delete(existing)
+            self._session.flush()
+
+    def list_sources_for_kb(self, kb_id: str) -> list[Any]:
+        """Returns all SourceDocument entities associated with a Knowledge Base."""
+        from app.persistence.converters import source_document_from_orm
+        from app.persistence.models import KnowledgeBaseSourceORM, SourceDocumentORM
+
+        stmt = (
+            select(SourceDocumentORM)
+            .join(
+                KnowledgeBaseSourceORM,
+                KnowledgeBaseSourceORM.source_document_id == SourceDocumentORM.source_document_id,
+            )
+            .where(KnowledgeBaseSourceORM.knowledge_base_id == kb_id)
+            .order_by(SourceDocumentORM.created_at.asc())
+        )
+        return [source_document_from_orm(r) for r in self._session.scalars(stmt).all()]
+
+    def count_sources_for_kb(self, kb_id: str) -> int:
+        """Counts the number of documents in a Knowledge Base."""
+        from app.persistence.models import KnowledgeBaseSourceORM
+
+        stmt = (
+            select(func.count())
+            .select_from(KnowledgeBaseSourceORM)
+            .where(KnowledgeBaseSourceORM.knowledge_base_id == kb_id)
+        )
+        return int(self._session.scalar(stmt) or 0)
+
+    def attach_to_task(self, task_id: str, kb_id: str) -> None:
+        """Attaches a Knowledge Base to a task."""
+        from app.persistence.models import TaskKnowledgeBaseORM
+
+        existing = self._session.get(TaskKnowledgeBaseORM, (task_id, kb_id))
+        if existing is None:
+            orm = TaskKnowledgeBaseORM(
+                task_id=task_id,
+                knowledge_base_id=kb_id,
+                attached_at=datetime.now(UTC),
+            )
+            self._session.add(orm)
+            self._session.flush()
+
+    def detach_from_task(self, task_id: str, kb_id: str) -> None:
+        """Detaches a Knowledge Base from a task."""
+        from app.persistence.models import TaskKnowledgeBaseORM
+
+        existing = self._session.get(TaskKnowledgeBaseORM, (task_id, kb_id))
+        if existing is not None:
+            self._session.delete(existing)
+            self._session.flush()
+
+    def list_kbs_for_task(self, task_id: str) -> list[Any]:
+        """Returns all Knowledge Bases attached to a task."""
+        from app.persistence.converters import knowledge_base_from_orm
+        from app.persistence.models import KnowledgeBaseORM, TaskKnowledgeBaseORM
+
+        stmt = (
+            select(KnowledgeBaseORM)
+            .join(
+                TaskKnowledgeBaseORM,
+                TaskKnowledgeBaseORM.knowledge_base_id == KnowledgeBaseORM.knowledge_base_id,
+            )
+            .where(TaskKnowledgeBaseORM.task_id == task_id)
+            .order_by(KnowledgeBaseORM.created_at.desc())
+        )
+        return [knowledge_base_from_orm(r) for r in self._session.scalars(stmt).all()]
+
+    def list_sources_for_task_with_kbs(self, task_id: str) -> list[Any]:
+        """Returns all SourceDocument entities for a task, merging direct task sources and attached KB sources."""
+        from app.persistence.converters import source_document_from_orm
+        from app.persistence.models import (
+            KnowledgeBaseORM,
+            KnowledgeBaseSourceORM,
+            SourceDocumentORM,
+            TaskKnowledgeBaseORM,
+            TaskSourceORM,
+        )
+
+        # 1. Direct task sources
+        stmt_direct = (
+            select(SourceDocumentORM)
+            .join(
+                TaskSourceORM,
+                TaskSourceORM.source_document_id == SourceDocumentORM.source_document_id,
+            )
+            .where(TaskSourceORM.task_id == task_id)
+        )
+        direct_sources = self._session.scalars(stmt_direct).all()
+
+        # 2. Attached active KB sources
+        stmt_kb = (
+            select(SourceDocumentORM)
+            .join(
+                KnowledgeBaseSourceORM,
+                KnowledgeBaseSourceORM.source_document_id == SourceDocumentORM.source_document_id,
+            )
+            .join(
+                TaskKnowledgeBaseORM,
+                TaskKnowledgeBaseORM.knowledge_base_id == KnowledgeBaseSourceORM.knowledge_base_id,
+            )
+            .join(
+                KnowledgeBaseORM,
+                KnowledgeBaseORM.knowledge_base_id == TaskKnowledgeBaseORM.knowledge_base_id,
+            )
+            .where(
+                TaskKnowledgeBaseORM.task_id == task_id,
+                KnowledgeBaseORM.status == "ACTIVE",
+            )
+        )
+        kb_sources = self._session.scalars(stmt_kb).all()
+
+        # Deduplicate preserving order (direct first, then KB)
+        seen_ids: set[str] = set()
+        merged: list[Any] = []
+        for src_orm in list(direct_sources) + list(kb_sources):
+            if src_orm.source_document_id not in seen_ids:
+                seen_ids.add(src_orm.source_document_id)
+                merged.append(source_document_from_orm(src_orm))
+        return merged
+
+
+class EmbeddingRepository:
+    """Repository for persisting and querying chunk vector embeddings."""
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def save_chunk_embeddings(self, embeddings: Sequence[Any]) -> None:
+        """Upserts a sequence of ChunkEmbedding domain records."""
+        from app.persistence.converters import chunk_embedding_to_orm
+        from app.persistence.models import ChunkEmbeddingORM
+
+        for emb in embeddings:
+            orm = self._session.get(ChunkEmbeddingORM, emb.embedding_id)
+            if orm is None:
+                orm = chunk_embedding_to_orm(emb)
+                self._session.add(orm)
+            else:
+                orm.dimension = emb.dimension
+                orm.embedding_vector = list(emb.vector)
+                orm.text_hash = emb.text_hash
+                orm.retrieval_policy_version = emb.retrieval_policy_version
+        self._session.flush()
+
+    def get_chunk_embedding(self, chunk_id: str, provider: str, model: str) -> Any | None:
+        """Retrieves a ChunkEmbedding for a specific chunk, provider, and model."""
+        from app.persistence.converters import chunk_embedding_from_orm
+        from app.persistence.models import ChunkEmbeddingORM
+
+        stmt = (
+            select(ChunkEmbeddingORM)
+            .where(
+                ChunkEmbeddingORM.chunk_id == chunk_id,
+                ChunkEmbeddingORM.provider == provider,
+                ChunkEmbeddingORM.model == model,
+            )
+            .limit(1)
+        )
+        orm = self._session.scalars(stmt).first()
+        return chunk_embedding_from_orm(orm) if orm is not None else None
+
+    def list_embeddings_for_chunks(
+        self,
+        chunk_ids: Sequence[str],
+        provider: str,
+        model: str,
+    ) -> list[Any]:
+        """Lists embeddings for a collection of chunk IDs with the given provider and model."""
+        from app.persistence.converters import chunk_embedding_from_orm
+        from app.persistence.models import ChunkEmbeddingORM
+
+        if not chunk_ids:
+            return []
+
+        stmt = (
+            select(ChunkEmbeddingORM)
+            .where(
+                ChunkEmbeddingORM.chunk_id.in_(list(chunk_ids)),
+                ChunkEmbeddingORM.provider == provider,
+                ChunkEmbeddingORM.model == model,
+            )
+        )
+        return [chunk_embedding_from_orm(r) for r in self._session.scalars(stmt).all()]
+
+    def list_embeddings_for_sources(
+        self,
+        source_document_ids: Sequence[str],
+        provider: str,
+        model: str,
+    ) -> list[Any]:
+        """Lists embeddings for all chunks belonging to the given source documents."""
+        from app.persistence.converters import chunk_embedding_from_orm
+        from app.persistence.models import ChunkEmbeddingORM, KnowledgeChunkORM
+
+        if not source_document_ids:
+            return []
+
+        stmt = (
+            select(ChunkEmbeddingORM)
+            .join(
+                KnowledgeChunkORM,
+                KnowledgeChunkORM.chunk_id == ChunkEmbeddingORM.chunk_id,
+            )
+            .where(
+                KnowledgeChunkORM.source_document_id.in_(list(source_document_ids)),
+                ChunkEmbeddingORM.provider == provider,
+                ChunkEmbeddingORM.model == model,
+            )
+        )
+        return [chunk_embedding_from_orm(r) for r in self._session.scalars(stmt).all()]
 

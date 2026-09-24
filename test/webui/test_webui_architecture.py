@@ -87,6 +87,18 @@ def test_api_client_methods_interface():
         "get_delivery_manifest",
         "get_download_url",
         "download_delivery_file",
+        # Knowledge Base subsystem methods
+        "create_knowledge_base",
+        "list_knowledge_bases",
+        "get_knowledge_base",
+        "update_knowledge_base",
+        "archive_knowledge_base",
+        "upload_knowledge_base_document",
+        "list_knowledge_base_documents",
+        "retry_knowledge_base_document",
+        "attach_knowledge_base_to_task",
+        "detach_knowledge_base_from_task",
+        "list_task_knowledge_bases",
     ]
     client = KnowledgeVideoApiClient(base_url="http://mock.test/api/v1")
     for method in expected_methods:

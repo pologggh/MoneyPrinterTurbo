@@ -273,18 +273,18 @@ def test_production_registry_contains_evidence_plan_script_and_no_mocks():
     assert registry.has_executor(Stage.SCRIPT)
     assert isinstance(registry.get_executor(Stage.SCRIPT), ScriptStageExecutor)
 
-    # PRODUCTION_PLAN, ASSET, AUDIO, COMPOSITION, and QUALITY_REVIEW are supported; DELIVERY remains unsupported
+    # The completed workflow supports all downstream stages through DELIVERY.
     assert registry.has_executor(Stage.PRODUCTION_PLAN)
     assert registry.has_executor(Stage.ASSET)
     assert registry.has_executor(Stage.AUDIO)
     assert registry.has_executor(Stage.COMPOSITION)
     assert registry.has_executor(Stage.QUALITY_REVIEW)
-    assert not registry.has_executor(Stage.DELIVERY)
-    assert registry.get_executor(Stage.DELIVERY) is None
+    assert registry.has_executor(Stage.DELIVERY)
+    assert registry.get_executor(Stage.DELIVERY) is not None
 
 
-def test_unsupported_storyboard_remains_queued_in_default_registry(session_factory):
-    """Verify that unsupported downstream job remains safe and QUEUED when worker runs with default registry."""
+def test_unsupported_delivery_remains_queued_with_empty_registry(session_factory):
+    """Verify an explicitly unsupported job remains safe and QUEUED."""
     task_id = f"task_{uuid4().hex[:8]}"
     with session_factory() as session:
         task_repo = KnowledgeVideoTaskRepository(session)
@@ -316,7 +316,7 @@ def test_unsupported_storyboard_remains_queued_in_default_registry(session_facto
 
     worker = StageWorker(
         session_factory=session_factory,
-        registry=get_default_executor_registry(session_factory=session_factory),
+        registry=StageExecutorRegistry(),
         worker_id="worker-test-1",
     )
     processed = worker.run_once()

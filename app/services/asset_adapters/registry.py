@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from typing import Any
+
+from app.services.asset_adapters.aliyun_wan_adapter import AliyunWanAdapter
 from app.services.asset_adapters.base import AssetExecutionAdapter
 from app.services.asset_adapters.local_asset_adapter import LocalAssetAdapter
 from app.services.asset_adapters.openai_image_adapter import OpenAIImageAdapter
@@ -25,11 +28,21 @@ class AdapterRegistry:
     Registry providing the appropriate AssetExecutionAdapter for a candidate provider.
     """
 
-    def __init__(self, custom_adapters: dict[str, AssetExecutionAdapter] | None = None):
+    def __init__(
+        self,
+        custom_adapters: dict[str, AssetExecutionAdapter] | None = None,
+        source_resolver: Any | None = None,
+        session_factory: Any | None = None,
+    ):
         seedance_adapter = SeedanceAdapter()
         stock_adapter = StockSearchAdapter()
-        local_adapter = LocalAssetAdapter()
+        if source_resolver is None and session_factory is not None:
+            from app.services.source_asset_resolver import DefaultSourceAssetResolver
+
+            source_resolver = DefaultSourceAssetResolver(session_factory=session_factory)
+        local_adapter = LocalAssetAdapter(source_resolver=source_resolver)
         self._adapters: dict[str, AssetExecutionAdapter] = {
+            "aliyun_wan": AliyunWanAdapter(),
             "volcengine_seedance": seedance_adapter,
             "seedance": seedance_adapter,
             "wavespeed": WaveSpeedAdapter(),
@@ -40,6 +53,7 @@ class AdapterRegistry:
             "system_source_asset": local_adapter,
             "system_user_asset": local_adapter,
             "system_diagram": local_adapter,
+            "system_knowledge_card": local_adapter,
         }
         if custom_adapters:
             self._adapters.update({k.lower(): v for k, v in custom_adapters.items()})

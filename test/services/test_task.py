@@ -1764,6 +1764,15 @@ class TestTaskService(unittest.TestCase):
                 "cross_post_video",
                 return_value={"success": True, "request_id": "upload-1"},
             ) as cross_post,
+            patch.object(
+                tm.llm,
+                "generate_social_metadata",
+                return_value={
+                    "title": "Coffee",
+                    "caption": "A short coffee story.",
+                    "hashtags": [],
+                },
+            ),
             patch.object(tm.time, "sleep") as sleep,
         ):
             tm._run_cross_post(

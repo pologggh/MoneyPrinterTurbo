@@ -1306,6 +1306,7 @@ class RetrievalSnapshotORM(Base):
     source_scope_ids_json: Mapped[list] = mapped_column(EvidenceType, nullable=False, default=list)
     retrieval_policy_version: Mapped[str] = mapped_column(String(64), nullable=False)
     processing_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    effective_retrieval_mode: Mapped[str] = mapped_column(String(32), nullable=False, default="BM25_ONLY", server_default="BM25_ONLY")
     candidates_json: Mapped[list] = mapped_column(EvidenceType, nullable=False, default=list)
     selected_evidence_ids_json: Mapped[list] = mapped_column(EvidenceType, nullable=False, default=list)
     content_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -1548,4 +1549,85 @@ class DeliveryManifestORM(Base):
     )
 
 
+class KnowledgeBaseORM(Base):
+    __tablename__ = "knowledge_bases"
 
+    knowledge_base_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="ACTIVE")
+    metadata_json: Mapped[dict] = mapped_column(EvidenceType, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        Index("ix_knowledge_bases_status", "status"),
+        Index("ix_knowledge_bases_created_at", "created_at"),
+    )
+
+
+class KnowledgeBaseSourceORM(Base):
+    __tablename__ = "knowledge_base_sources"
+
+    knowledge_base_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("knowledge_bases.knowledge_base_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    source_document_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("source_documents.source_document_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    associated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        Index("ix_kb_sources_source_doc_id", "source_document_id"),
+        Index("ix_kb_sources_associated_at", "associated_at"),
+    )
+
+
+class TaskKnowledgeBaseORM(Base):
+    __tablename__ = "task_knowledge_bases"
+
+    task_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("knowledge_video_tasks.task_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    knowledge_base_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("knowledge_bases.knowledge_base_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    attached_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        Index("ix_task_kbs_knowledge_base_id", "knowledge_base_id"),
+        Index("ix_task_kbs_attached_at", "attached_at"),
+    )
+
+
+class ChunkEmbeddingORM(Base):
+    __tablename__ = "chunk_embeddings"
+
+    embedding_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    chunk_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("knowledge_chunks.chunk_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    provider: Mapped[str] = mapped_column(String(64), nullable=False)
+    model: Mapped[str] = mapped_column(String(128), nullable=False)
+    dimension: Mapped[int] = mapped_column(Integer, nullable=False)
+    embedding_vector: Mapped[list] = mapped_column(EvidenceType, nullable=False)
+    text_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    retrieval_policy_version: Mapped[str] = mapped_column(String(64), nullable=False, default="vector_v1")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        Index("ix_chunk_embeddings_chunk_id", "chunk_id"),
+        Index("ix_chunk_embeddings_text_hash", "text_hash"),
+        Index("ix_chunk_embeddings_provider_model", "provider", "model"),
+        UniqueConstraint("chunk_id", "provider", "model", name="uq_chunk_embeddings_chunk_provider_model"),
+    )

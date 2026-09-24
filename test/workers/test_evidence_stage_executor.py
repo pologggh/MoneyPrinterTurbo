@@ -87,34 +87,13 @@ def test_production_registry_contains_no_fake_executors():
         assert not executor.__class__.__name__.startswith(("Mock", "Fake", "Dummy"))
 
 
-def test_unimplemented_stages_remain_unsupported():
-    """Verify that DELIVERY and subsequent stages remain unregistered in Stage Q1."""
+def test_all_workflow_stages_are_registered():
+    """Verify that the completed default registry covers every workflow stage."""
     registry = get_default_executor_registry()
+    assert registry.list_supported_stages() == set(Stage)
     for stage in Stage:
-        if stage not in (
-            Stage.EVIDENCE,
-            Stage.KNOWLEDGE_PLAN,
-            Stage.SCRIPT,
-            Stage.STORYBOARD,
-            Stage.PRODUCTION_PLAN,
-            Stage.ASSET,
-            Stage.AUDIO,
-            Stage.COMPOSITION,
-            Stage.QUALITY_REVIEW,
-        ):
-            assert not registry.has_executor(stage)
-            assert registry.get_executor(stage) is None
-    assert registry.list_supported_stages() == {
-        Stage.EVIDENCE,
-        Stage.KNOWLEDGE_PLAN,
-        Stage.SCRIPT,
-        Stage.STORYBOARD,
-        Stage.PRODUCTION_PLAN,
-        Stage.ASSET,
-        Stage.AUDIO,
-        Stage.COMPOSITION,
-        Stage.QUALITY_REVIEW,
-    }
+        assert registry.has_executor(stage)
+        assert registry.get_executor(stage) is not None
 
 
 # =============================================================================

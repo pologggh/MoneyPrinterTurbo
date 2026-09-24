@@ -176,7 +176,8 @@ def compute_retrieval_snapshot_fingerprint(
     retrieval_policy_version: str,
     processing_version: str,
     candidates: Sequence[Any],
-    selected_evidence_ids: Sequence[str],
+    selected_evidence_ids: Sequence[str] = (),
+    effective_retrieval_mode: str = "BM25_ONLY",
 ) -> str:
     """Compute deterministic content fingerprint for a RetrievalSnapshot."""
     scopes_str = ",".join(sorted(source_scope_ids))
@@ -188,7 +189,7 @@ def compute_retrieval_snapshot_fingerprint(
         method = getattr(c, "retrieval_method", "")
         cand_items.append(f"{cid}:{score:.4f}:{method}")
     cand_str = "|".join(cand_items)
-    payload = f"{task_id}:{query.strip()}:{scopes_str}:{retrieval_policy_version}:{processing_version}:{cand_str}:{ev_str}".encode("utf-8")
+    payload = f"{task_id}:{query.strip()}:{scopes_str}:{retrieval_policy_version}:{processing_version}:{effective_retrieval_mode}:{cand_str}:{ev_str}".encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
 
 
@@ -583,6 +584,7 @@ class RetrievalSnapshot(BaseModel):
     source_scope_ids: tuple[str, ...] = Field(default_factory=tuple)
     retrieval_policy_version: str = "lexical_bm25_v1"
     processing_version: str = "knowledge_processing_v1"
+    effective_retrieval_mode: str = "BM25_ONLY"
     candidates: tuple[RetrievalCandidate, ...] = Field(default_factory=tuple)
     selected_evidence_ids: tuple[str, ...] = Field(default_factory=tuple)
     content_fingerprint: str
@@ -598,6 +600,7 @@ class RetrievalSnapshot(BaseModel):
         selected_evidence_ids: Sequence[str] = (),
         retrieval_policy_version: str = "lexical_bm25_v1",
         processing_version: str = "knowledge_processing_v1",
+        effective_retrieval_mode: str = "BM25_ONLY",
         retrieval_snapshot_id: str | None = None,
         now: datetime | None = None,
     ) -> RetrievalSnapshot:
@@ -614,6 +617,7 @@ class RetrievalSnapshot(BaseModel):
             processing_version=processing_version,
             candidates=cands_tuple,
             selected_evidence_ids=sel_ev_tuple,
+            effective_retrieval_mode=effective_retrieval_mode,
         )
         return cls(
             retrieval_snapshot_id=retrieval_snapshot_id or f"rs_{uuid4().hex[:24]}",
@@ -622,6 +626,7 @@ class RetrievalSnapshot(BaseModel):
             source_scope_ids=sorted_scopes,
             retrieval_policy_version=retrieval_policy_version,
             processing_version=processing_version,
+            effective_retrieval_mode=effective_retrieval_mode,
             candidates=cands_tuple,
             selected_evidence_ids=sel_ev_tuple,
             content_fingerprint=fp,

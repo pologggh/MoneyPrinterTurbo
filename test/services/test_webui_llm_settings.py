@@ -11,6 +11,12 @@ ROOT_DIR = Path(__file__).parent.parent.parent
 WEBUI_MAIN = ROOT_DIR / "webui" / "Main.py"
 
 
+def legacy_app_test(timeout=60):
+    app = AppTest.from_file(str(WEBUI_MAIN), default_timeout=timeout)
+    app.session_state["app_view_mode"] = "legacy_video_generation"
+    return app
+
+
 def _widget_by_key(elements, key):
     return next(
         item
@@ -41,7 +47,7 @@ def test_kimi_platform_selection_keeps_endpoint_configuration_consistent():
             return_value=(False, "401 Invalid Authentication", 0.1),
         ),
     ):
-        app = AppTest.from_file(str(WEBUI_MAIN), default_timeout=60)
+        app = legacy_app_test()
         app.session_state["ui_language"] = "en"
         app.session_state["settings_dialog_open"] = True
         app.run()
@@ -101,7 +107,7 @@ def test_kimi_platform_selection_keeps_endpoint_configuration_consistent():
 def test_configure_llm_link_opens_settings_on_llm_tab():
     """视频主题旁的快捷入口应一次点击就打开并定位大模型设置。"""
     with patch.object(config, "try_save_config", return_value=True):
-        app = AppTest.from_file(str(WEBUI_MAIN), default_timeout=60)
+        app = legacy_app_test()
         app.session_state["ui_language"] = "en"
         app.run()
 
@@ -118,7 +124,7 @@ def test_configure_llm_link_opens_settings_on_llm_tab():
 def test_material_settings_target_uses_localized_tab_state_and_is_consumed():
     """素材快捷入口保存稳定业务 ID，渲染时再解析当前语言标签。"""
     with patch.object(config, "try_save_config", return_value=True):
-        app = AppTest.from_file(str(WEBUI_MAIN), default_timeout=60)
+        app = legacy_app_test()
         app.session_state["ui_language"] = "zh"
         app.session_state["settings_dialog_open"] = True
         app.session_state["settings_dialog_target_tab"] = "material"
@@ -145,7 +151,7 @@ def test_ai_video_settings_prioritize_sponsors_and_own_shengsuan_key():
         patch.object(config, "ui", ui_config),
         patch.object(config, "try_save_config", return_value=True),
     ):
-        app = AppTest.from_file(str(WEBUI_MAIN), default_timeout=60)
+        app = legacy_app_test()
         app.session_state["ui_language"] = "en"
         app.session_state["settings_dialog_open"] = True
         app.session_state["settings_dialog_target_tab"] = "material"

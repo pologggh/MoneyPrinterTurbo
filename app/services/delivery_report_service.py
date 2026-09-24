@@ -83,6 +83,7 @@ class DeliveryReportService:
         # Gather sources and evidence snapshot
         sources = self._evidence_repo.list_sources_for_task(task_id)
         latest_snapshot = self._evidence_repo.get_latest_snapshot_for_task(task_id)
+        latest_retrieval = self._evidence_repo.get_latest_retrieval_snapshot_for_task(task_id)
 
         evidence_items = []
         knowledge_claims = []
@@ -130,6 +131,22 @@ class DeliveryReportService:
             ])
         else:
             lines.append("_No frozen evidence snapshot recorded for this task._")
+
+        lines.extend([
+            "",
+            "## Retrieval & Hybrid RAG Summary",
+        ])
+        if latest_retrieval:
+            eff_mode = getattr(latest_retrieval, "effective_retrieval_mode", "BM25_ONLY")
+            lines.extend([
+                f"- **Retrieval Snapshot ID**: `{latest_retrieval.retrieval_snapshot_id}`",
+                f"- **Effective Retrieval Mode**: `{eff_mode}`",
+                f"- **Retrieval Policy Version**: `{latest_retrieval.retrieval_policy_version}`",
+                f"- **Query**: {latest_retrieval.query}",
+                f"- **Ranked Candidates**: {len(latest_retrieval.candidates)}",
+            ])
+        else:
+            lines.append("_No retrieval execution snapshot recorded for this task._")
 
         lines.extend([
             "",
@@ -200,10 +217,10 @@ class DeliveryReportService:
                 "| --- | --- | --- | --- |",
             ])
             for seg in segments:
-                narr = seg.narration.replace("\n", " ") if seg.narration else ""
+                narr = seg.narration_text.replace("\n", " ") if seg.narration_text else ""
                 if len(narr) > 80:
                     narr = narr[:77] + "..."
-                linked_ev = ", ".join(f"`{e}`" for e in seg.evidence_ids) if seg.evidence_ids else "N/A"
+                linked_ev = ", ".join(f"`{e}`" for e in seg.evidence_refs) if seg.evidence_refs else "N/A"
                 lines.append(f"| {seg.order} | {narr} | {seg.target_duration:.1f}s | {linked_ev} |")
         else:
             lines.append("_No script segments available._")
@@ -277,8 +294,9 @@ class DeliveryReportService:
         if sorted_jobs:
             for j in sorted_jobs:
                 dur_str = "N/A"
-                if j.started_at and j.completed_at:
-                    dur_sec = (j.completed_at - j.started_at).total_seconds()
+                job_end = getattr(j, "finished_at", None) or getattr(j, "completed_at", None)
+                if j.started_at and job_end:
+                    dur_sec = (job_end - j.started_at).total_seconds()
                     dur_str = f"{dur_sec:.2f}"
                 elif j.started_at:
                     dur_str = "running"

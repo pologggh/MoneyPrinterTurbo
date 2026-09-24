@@ -2,6 +2,7 @@ from unittest.mock import patch
 
 import pytest
 
+from app.config import config
 from app.domain.asset_router import (
     AssetCapability,
     AssetRoutingRequest,
@@ -550,3 +551,84 @@ def test_no_eligible_candidates_produces_route_unavailable():
     err = exc_info.value
     assert RouteUnavailableReason.DISABLED_CAPABILITY in err.reasons
     assert "ROUTE_UNAVAILABLE" in str(err)
+
+
+# 16. Router selects knowledge card fallback for AI_IMAGE when no real image provider is enabled
+def test_router_selects_knowledge_card_when_real_image_provider_disabled():
+    with patch.dict(
+        config.app,
+        {
+            "openai_image_api_key": None,
+            "openai_api_key": "",
+            "openai_image_base_url": "",
+        },
+    ):
+        router = HybridAssetRouter()
+        req = _make_dummy_request(
+            requested_visual_type=VisualType.AI_IMAGE,
+            target_duration=4.0,
+            aspect_ratio="16:9",
+        )
+        decision = router.route(req)
+
+        assert decision.selected_candidate is not None
+        assert decision.selected_candidate.provider == "system_knowledge_card"
+        assert decision.selected_candidate.model == "knowledge_card_v1"
+        assert decision.selected_candidate.generation_mode == GenerationMode.TEXT_TO_IMAGE
+        assert decision.selected_candidate.is_eligible is True
+        assert len(decision.eligible_candidates) == 1
+        assert decision.selected_score is not None
+
+
+# 17. Router prioritizes real image provider over knowledge card fallback when enabled
+def test_router_prioritizes_real_image_provider_when_enabled():
+    with patch.dict(
+        config.app,
+        {
+            "openai_image_base_url": "https://api.openai.com/v1",
+            "openai_image_model": "dall-e-3",
+            "openai_image_api_keys": ["sk-real-mock-key"],
+            "openai_api_key": "",
+        },
+    ):
+        router = HybridAssetRouter()
+        req = _make_dummy_request(
+            requested_visual_type=VisualType.AI_IMAGE,
+            target_duration=4.0,
+            aspect_ratio="16:9",
+        )
+        decision = router.route(req)
+
+        assert decision.selected_candidate is not None
+        assert decision.selected_candidate.provider == "openai"
+        assert decision.selected_candidate.is_eligible is True
+        assert all(c.provider != "system_knowledge_card" for c in decision.eligible_candidates)
+
+
+# 18. Router routes to knowledge card fallback when only text LLM key is configured
+def test_router_routes_to_knowledge_card_when_only_text_llm_key_configured():
+    with patch.dict(
+        config.app,
+        {
+            "openai_api_key": "sk-mock-text-llm-key",
+            "openai_image_api_key": "",
+            "openai_image_api_keys": [],
+            "openai_image_base_url": "",
+            "openai_image_model": "",
+        },
+    ):
+        router = HybridAssetRouter()
+        req = _make_dummy_request(
+            requested_visual_type=VisualType.AI_IMAGE,
+            target_duration=4.0,
+            aspect_ratio="16:9",
+        )
+        decision = router.route(req)
+
+        assert decision.selected_candidate is not None
+        assert decision.selected_candidate.provider == "system_knowledge_card"
+        assert decision.selected_candidate.is_eligible is True
+        assert any(
+            c.provider == "openai" and not c.is_eligible
+            for c in decision.rejected_candidates
+        )

@@ -241,8 +241,8 @@ def test_stable_evidence_item_reuse_across_queries(session_factory):
         assert len(all_items) == 1
 
 
-def test_evidence_stage_executor_is_registered_in_stage_e3():
-    """Verify that Stage.EVIDENCE executor is registered in Stage E3 production registry, while subsequent stages remain unregistered."""
+def test_evidence_stage_executor_is_registered_in_completed_registry():
+    """Verify EVIDENCE and downstream production stages are registered."""
     from app.application.evidence_stage_executor import EvidenceStageExecutor
 
     registry = get_default_executor_registry()
@@ -251,4 +251,4 @@ def test_evidence_stage_executor_is_registered_in_stage_e3():
     assert isinstance(executor, EvidenceStageExecutor)
     assert registry.get_executor(Stage.COMPOSITION) is not None
     assert registry.get_executor(Stage.QUALITY_REVIEW) is not None
-    assert registry.get_executor(Stage.DELIVERY) is None
+    assert registry.get_executor(Stage.DELIVERY) is not None

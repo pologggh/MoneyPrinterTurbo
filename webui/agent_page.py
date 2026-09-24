@@ -46,8 +46,8 @@ def render_agent_page() -> None:
     # Header section
     _render_header()
 
-    # View Mode Selector in sub-header: Create, Dashboard, or History
-    view_col1, view_col2, view_col3 = st.columns([1.2, 1.2, 2.6])
+    # View Mode Selector in sub-header: Create, Dashboard, History, or Knowledge Bases
+    view_col1, view_col2, view_col3, view_col4 = st.columns([1.2, 1.2, 1.2, 1.5])
     current_tab = st.session_state.get("kva_view_tab", "dashboard")
 
     with view_col1:
@@ -80,6 +80,16 @@ def render_agent_page() -> None:
             st.session_state["kva_view_tab"] = "history"
             st.rerun()
 
+    with view_col4:
+        if st.button(
+            "📚 知识库管理 (Knowledge Bases)",
+            key="kva_btn_nav_kbs",
+            type="primary" if current_tab == "knowledge_base" else "secondary",
+            width="stretch",
+        ):
+            st.session_state["kva_view_tab"] = "knowledge_base"
+            st.rerun()
+
     st.divider()
 
     # Dispatch to current tab
@@ -87,6 +97,8 @@ def render_agent_page() -> None:
         _render_create_task_view(client)
     elif current_tab == "history":
         _render_task_history_view(client)
+    elif current_tab == "knowledge_base":
+        _render_knowledge_base_view(client)
     else:
         _render_task_dashboard_view(client)
 
@@ -111,6 +123,12 @@ def _render_create_task_view(client: KnowledgeVideoApiClient) -> None:
     """Form to create a new Knowledge Video Task."""
     st.markdown("#### 📝 新建知识视频任务 (Create Knowledge Video Task)")
 
+    active_kbs = []
+    try:
+        active_kbs = client.list_knowledge_bases(status="ACTIVE")
+    except Exception as exc:
+        st.caption(f"无法加载知识库列表: {exc}")
+
     with st.form("kva_create_task_form"):
         col_topic, col_policy = st.columns([3, 1])
         with col_topic:
@@ -121,10 +139,9 @@ def _render_create_task_view(client: KnowledgeVideoApiClient) -> None:
             )
         with col_policy:
             workflow_policy = st.selectbox(
-                "工作流策略 (Policy)",
-                options=["AUTO", "REVIEW"],
-                format_func=lambda x: "全自动出片 (AUTO)" if x == "AUTO" else "人机审核把关 (REVIEW)",
-                help="REVIEW 策略会在知识方案、脚本、分镜生成后进入暂停状态等待人工审核批准",
+                "执行策略 (Policy)",
+                options=["AUTO", "SEMI_AUTO", "SUPERVISED"],
+                help="AUTO: 全自动推进；SEMI_AUTO: 脚本分镜设卡审核；SUPERVISED: 关键阶段均需审核",
             )
 
         col1, col2, col3 = st.columns(3)
@@ -158,16 +175,28 @@ def _render_create_task_view(client: KnowledgeVideoApiClient) -> None:
             help="当输入证据资料不足时，允许 Agent 自动通过搜索引擎获取最新知识补充",
         )
 
-        st.markdown("##### 📚 初始证据资料接入 (Optional Evidence)")
+        st.markdown("##### 📚 关联知识库 (Attach Knowledge Bases)")
+        selected_kb_ids: list[str] = []
+        if active_kbs:
+            kb_map = {kb["knowledge_base_id"]: f"{kb['name']} ({kb.get('document_count', 0)} 篇文档)" for kb in active_kbs}
+            selected_kb_ids = st.multiselect(
+                "选择预置知识库 (Select Knowledge Bases)",
+                options=list(kb_map.keys()),
+                format_func=lambda k_id: kb_map.get(k_id, k_id),
+                help="所选知识库的文档将由 Hybrid RAG (BM25 + 向量检索) 自动注入第一阶段资料中",
+            )
+        else:
+            st.caption("当前暂无活跃知识库。您可在「📚 知识库管理」页面创建并上传文档。")
+
+        st.markdown("##### 📄 附加初始证据资料 (Optional Supplementary Evidence)")
         ev_col1, ev_col2 = st.columns([1, 3])
         with ev_col1:
             source_type = st.selectbox(
                 "证据类型",
-                options=["TEXT", "URL", "KNOWLEDGE_BASE"],
+                options=["TEXT", "URL"],
                 format_func=lambda x: {
                     "TEXT": "文本资料 (Text)",
                     "URL": "网络链接 (URL)",
-                    "KNOWLEDGE_BASE": "知识库 (Knowledge Base)",
                 }.get(x, x),
             )
         with ev_col2:
@@ -175,7 +204,7 @@ def _render_create_task_view(client: KnowledgeVideoApiClient) -> None:
 
         source_content = st.text_area(
             "资料内容或 URL (Content / Locator)",
-            placeholder="若选择文本请输入文本内容；若选择 URL 请输入完整 http/https 链接；若选择知识库请输入知识库 ID",
+            placeholder="若选择文本请输入文本内容；若选择 URL 请输入完整 http/https 链接",
             height=100,
         )
 
@@ -186,6 +215,22 @@ def _render_create_task_view(client: KnowledgeVideoApiClient) -> None:
             st.error("请输入任务主题 (Topic 不能为空)")
             return
 
+        initial_evidence: list[dict[str, Any]] = []
+        if source_content and source_content.strip():
+            clean_content = source_content.strip()
+            if source_type == "TEXT":
+                initial_evidence.append({
+                    "source_type": "TEXT",
+                    "text_content": clean_content,
+                    "title": source_title or topic,
+                })
+            elif source_type == "URL":
+                initial_evidence.append({
+                    "source_type": "URL",
+                    "url": clean_content,
+                    "title": source_title or clean_content,
+                })
+
         with st.spinner("正在初始化任务并建立流水线..."):
             try:
                 task_res = client.create_task(
@@ -195,39 +240,13 @@ def _render_create_task_view(client: KnowledgeVideoApiClient) -> None:
                     language=language,
                     workflow_policy=workflow_policy,
                     allow_research=allow_research,
+                    knowledge_base_ids=selected_kb_ids,
+                    initial_evidence=initial_evidence,
                 )
                 task_id = task_res.get("task_id")
                 if not task_id:
                     st.error(f"创建任务失败，服务端未返回 task_id: {task_res}")
                     return
-
-                # Register optional evidence if provided
-                if source_content and source_content.strip():
-                    clean_content = source_content.strip()
-                    try:
-                        if source_type == "TEXT":
-                            client.register_evidence(
-                                task_id=task_id,
-                                source_type="TEXT",
-                                text_content=clean_content,
-                                title=source_title or topic,
-                            )
-                        elif source_type == "URL":
-                            client.register_evidence(
-                                task_id=task_id,
-                                source_type="URL",
-                                url=clean_content,
-                                title=source_title or clean_content,
-                            )
-                        elif source_type == "KNOWLEDGE_BASE":
-                            client.register_evidence(
-                                task_id=task_id,
-                                source_type="KNOWLEDGE_BASE",
-                                kb_id=clean_content,
-                                title=source_title or f"KB-{clean_content}",
-                            )
-                    except Exception as ev_err:
-                        st.warning(f"任务创建成功，但附加证据注册出现提示: {ev_err}")
 
                 st.session_state["kva_active_task_id"] = task_id
                 st.session_state["kva_view_tab"] = "dashboard"
@@ -251,8 +270,8 @@ def _render_task_dashboard_view(client: KnowledgeVideoApiClient) -> None:
         recent_tasks = []
         try:
             recent_tasks = client.list_tasks(limit=20)
-        except Exception:
-            pass
+        except Exception as exc:
+            st.caption(f"未能加载任务列表: {exc}")
 
         task_options = {t["task_id"]: f"{t['topic']} ({t['task_status']}) [{t['task_id'][:8]}]" for t in recent_tasks}
         if active_task_id and active_task_id not in task_options:
@@ -297,10 +316,11 @@ def _render_task_dashboard_view(client: KnowledgeVideoApiClient) -> None:
 
     st.divider()
 
-    # Inspection Tabs: Delivery, Artifacts, Events, Task Details
-    tab_delivery, tab_artifacts, tab_events, tab_info = st.tabs([
+    # Inspection Tabs: Delivery, Artifacts, Knowledge Bases, Events, Task Details
+    tab_delivery, tab_artifacts, tab_kbs, tab_events, tab_info = st.tabs([
         "🎬 交付成片与报告 (Delivery)",
         "📦 阶段制品快照 (Artifacts)",
+        "📚 关联知识库 (Attached KBs)",
         "📜 追踪审计日志 (Trace Events)",
         "⚙️ 任务诊断信息 (Diagnostics)",
     ])
@@ -310,6 +330,9 @@ def _render_task_dashboard_view(client: KnowledgeVideoApiClient) -> None:
 
     with tab_artifacts:
         _render_artifacts_tab(client, task_data)
+
+    with tab_kbs:
+        _render_task_attached_kbs_tab(client, task_data)
 
     with tab_events:
         _render_events_tab(client, task_data)
@@ -479,6 +502,15 @@ def _render_checkpoint_and_actions(client: KnowledgeVideoApiClient, task_data: d
                             except Exception as exc:
                                 st.error(f"添加资料失败: {exc}")
 
+        # In EVIDENCE stage or NEEDS_EVIDENCE: show quick knowledge base attachment controls
+        if current_stage == "EVIDENCE" or task_status == "NEEDS_EVIDENCE":
+            with st.expander("📚 知识库关联管理 (Manage Task Knowledge Bases)", expanded=False):
+                _render_task_kb_controls(
+                    client,
+                    task_id,
+                    key_scope="checkpoint",
+                )
+
         # Recovery controls for recoverable / failed / running tasks
         ctrl_col1, ctrl_col2, ctrl_col3 = st.columns([1, 1, 2])
         if task_status in ("NEEDS_RECOVERY", "FAILED"):
@@ -589,8 +621,8 @@ def _render_delivery_tab(client: KnowledgeVideoApiClient, task_data: dict[str, A
                 mime="text/plain",
                 use_container_width=True,
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            st.caption(f"暂无字幕文件: {exc}")
 
         try:
             src_rep_bytes = client.download_delivery_file(task_id, target="source_report")
@@ -601,8 +633,8 @@ def _render_delivery_tab(client: KnowledgeVideoApiClient, task_data: dict[str, A
                 mime="text/markdown",
                 use_container_width=True,
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            st.caption(f"暂无资料追溯报告: {exc}")
 
         try:
             exec_rep_bytes = client.download_delivery_file(task_id, target="execution_report")
@@ -613,8 +645,8 @@ def _render_delivery_tab(client: KnowledgeVideoApiClient, task_data: dict[str, A
                 mime="text/markdown",
                 use_container_width=True,
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            st.caption(f"暂无执行概要报告: {exc}")
 
     st.divider()
 
@@ -798,3 +830,313 @@ def _render_task_history_view(client: KnowledgeVideoApiClient) -> None:
                 st.session_state["kva_view_tab"] = "dashboard"
                 st.rerun()
         st.divider()
+
+
+def _render_task_kb_controls(
+    client: KnowledgeVideoApiClient,
+    task_id: str,
+    *,
+    key_scope: str,
+) -> None:
+    """Renders attached KBs list with detach buttons and attach new KB selector."""
+    try:
+        attached_kbs = client.list_task_knowledge_bases(task_id)
+    except Exception as exc:
+        st.error(f"获取已关联知识库失败: {exc}")
+        attached_kbs = []
+
+    attached_ids = {k["knowledge_base_id"] for k in attached_kbs}
+
+    if attached_kbs:
+        st.markdown("**已关联的知识库：**")
+        for kb in attached_kbs:
+            k_id = kb["knowledge_base_id"]
+            k_name = kb.get("name", k_id)
+            k_docs = kb.get("document_count", 0)
+            col_info, col_act = st.columns([3.5, 1.2])
+            with col_info:
+                st.markdown(f"🟢 **{k_name}** (`{k_docs}` 篇文档) · ID: `{k_id[:8]}...`")
+            with col_act:
+                if st.button(
+                    "解除关联",
+                    key=f"detach_kb_ctrl_{key_scope}_{task_id}_{k_id}",
+                    use_container_width=True,
+                ):
+                    try:
+                        client.detach_knowledge_base_from_task(task_id, k_id)
+                        st.success(f"已解除知识库「{k_name}」关联")
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"解除关联失败: {exc}")
+    else:
+        st.info("当前任务尚未关联任何知识库。")
+
+    # Attach new KB
+    try:
+        all_active_kbs = client.list_knowledge_bases(status="ACTIVE")
+    except Exception:
+        all_active_kbs = []
+
+    available_kbs = [k for k in all_active_kbs if k["knowledge_base_id"] not in attached_ids]
+    if available_kbs:
+        st.markdown("---")
+        st.markdown("**关联新知识库：**")
+        c_sel, c_btn = st.columns([3, 1.2])
+        with c_sel:
+            kb_to_attach = st.selectbox(
+                "选择可用知识库",
+                options=[k["knowledge_base_id"] for k in available_kbs],
+                format_func=lambda kid: next(
+                    (f"{k['name']} ({k.get('document_count', 0)} 篇文档)" for k in available_kbs if k["knowledge_base_id"] == kid),
+                    kid,
+                ),
+                key=f"sel_attach_kb_{key_scope}_{task_id}",
+            )
+        with c_btn:
+            st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+            if st.button(
+                "立即关联",
+                key=f"btn_attach_kb_{key_scope}_{task_id}",
+                type="primary",
+                use_container_width=True,
+            ):
+                if kb_to_attach:
+                    try:
+                        client.attach_knowledge_base_to_task(task_id, kb_to_attach)
+                        st.success("知识库关联成功！")
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"关联知识库失败: {exc}")
+
+
+def _render_task_attached_kbs_tab(client: KnowledgeVideoApiClient, task_data: dict[str, Any]) -> None:
+    """Renders the Knowledge Bases tab in the task dashboard."""
+    task_id = task_data.get("task_id")
+    st.markdown("#### 📚 任务关联知识库 (Task Knowledge Bases)")
+    st.caption("关联的知识库将在 EVIDENCE 阶段通过 BM25 + 语义向量混合检索（Hybrid RRF）提供事实支撑并冻结至证据快照。")
+    _render_task_kb_controls(
+        client,
+        task_id,
+        key_scope="attached_tab",
+    )
+
+
+def _render_knowledge_base_view(client: KnowledgeVideoApiClient) -> None:
+    """Full knowledge base management view."""
+    st.markdown("### 📚 知识库管理 (Knowledge Bases)")
+    st.caption(
+        "管理持久化知识库及其文档。知识库中的文档在上传时自动进行切块与向量化嵌入，"
+        "任务执行 EVIDENCE 阶段时将使用 BM25 + 语义向量混合检索（Hybrid RRF）精准召回证据并追溯到源文档。"
+    )
+
+    left_col, right_col = st.columns([1.2, 2.2])
+
+    with left_col:
+        st.markdown("#### 📁 知识库列表")
+
+        # Create KB Expander
+        with st.expander("➕ 创建新知识库 (Create Knowledge Base)", expanded=False):
+            with st.form("create_kb_form", clear_on_submit=True):
+                new_kb_name = st.text_input("知识库名称 *", placeholder="例如：量子计算通识 / AI技术架构")
+                new_kb_desc = st.text_area("知识库描述", placeholder="描述该知识库覆盖的知识领域或适用主题", height=70)
+                if st.form_submit_button("确认创建", type="primary", use_container_width=True):
+                    if not new_kb_name or not new_kb_name.strip():
+                        st.error("知识库名称不能为空")
+                    else:
+                        try:
+                            kb_res = client.create_knowledge_base(
+                                name=new_kb_name.strip(),
+                                description=new_kb_desc.strip() if new_kb_desc else None,
+                            )
+                            st.session_state["kva_selected_kb_id"] = kb_res.get("knowledge_base_id")
+                            st.success(f"知识库「{new_kb_name}」创建成功！")
+                            st.rerun()
+                        except Exception as exc:
+                            st.error(f"创建知识库失败: {exc}")
+
+        show_archived = st.checkbox("显示已归档知识库 (Show Archived)", value=False)
+        try:
+            kbs = client.list_knowledge_bases(status=None if show_archived else "ACTIVE")
+        except Exception as exc:
+            st.error(f"加载知识库失败: {exc}")
+            kbs = []
+
+        if not kbs:
+            st.info("暂无知识库。点击上方「➕ 创建新知识库」创建第一个知识库。")
+            selected_kb_id = None
+        else:
+            selected_kb_id = st.session_state.get("kva_selected_kb_id")
+            kb_ids = [k["knowledge_base_id"] for k in kbs]
+            if not selected_kb_id or selected_kb_id not in kb_ids:
+                selected_kb_id = kb_ids[0]
+                st.session_state["kva_selected_kb_id"] = selected_kb_id
+
+            for kb in kbs:
+                k_id = kb["knowledge_base_id"]
+                is_selected = (k_id == selected_kb_id)
+                status = kb.get("status", "ACTIVE")
+                badge = "🟢" if status == "ACTIVE" else "⚪"
+                doc_count = kb.get("document_count", 0)
+
+                col_btn, col_del = st.columns([4, 1])
+                with col_btn:
+                    btn_label = f"{badge} **{kb['name']}** ({doc_count} 篇文档)"
+                    if st.button(
+                        btn_label,
+                        key=f"btn_select_kb_{k_id}",
+                        type="primary" if is_selected else "secondary",
+                        use_container_width=True,
+                    ):
+                        st.session_state["kva_selected_kb_id"] = k_id
+                        st.rerun()
+                with col_del:
+                    if status == "ACTIVE":
+                        if st.button("🗑️", key=f"btn_archive_kb_{k_id}", help="归档此知识库"):
+                            try:
+                                client.archive_knowledge_base(k_id)
+                                st.success(f"已归档知识库「{kb['name']}」")
+                                st.rerun()
+                            except Exception as exc:
+                                st.error(f"归档失败: {exc}")
+
+    with right_col:
+        if not selected_kb_id:
+            st.info("请在左侧选择或新建知识库以查看详情与管理文档。")
+            return
+
+        try:
+            current_kb = client.get_knowledge_base(selected_kb_id)
+        except Exception as exc:
+            st.error(f"获取知识库详情失败: {exc}")
+            return
+
+        st.markdown(f"#### 📖 知识库：{current_kb['name']}")
+        if current_kb.get("description"):
+            st.caption(current_kb["description"])
+
+        status = current_kb.get("status", "ACTIVE")
+        status_badge = "🟢 正常活跃 (ACTIVE)" if status == "ACTIVE" else "⚪ 已归档 (ARCHIVED)"
+        st.markdown(
+            f"- **状态**: {status_badge} | **ID**: `{selected_kb_id}` | "
+            f"**文档总数**: {current_kb.get('document_count', 0)}"
+        )
+
+        st.divider()
+
+        # Document Upload Section
+        if status == "ACTIVE":
+            st.markdown("##### 📤 上传新文档 (Upload Document)")
+            with st.expander("点击上传文档到该知识库", expanded=False):
+                with st.form(f"upload_doc_form_{selected_kb_id}", clear_on_submit=True):
+                    doc_file = st.file_uploader(
+                        "选择文档文件",
+                        type=["txt", "md", "pdf", "docx", "html"],
+                        help="支持格式: .txt, .md, .pdf, .docx, .html，单文件最大 50MB",
+                    )
+                    doc_title = st.text_input("文档标题 (可选)", placeholder="留空则默认使用文件名")
+                    upload_btn = st.form_submit_button("确认上传并构建索引", type="primary", use_container_width=True)
+
+                    if upload_btn:
+                        if not doc_file:
+                            st.warning("请先选择要上传的文件")
+                        else:
+                            with st.spinner("正在上传文档并执行分块与向量化嵌入..."):
+                                try:
+                                    content_bytes = doc_file.getvalue()
+                                    filename = doc_file.name
+                                    content_type = doc_file.type or "text/plain"
+                                    title = doc_title.strip() if doc_title else filename
+                                    res = client.upload_knowledge_base_document(
+                                        kb_id=selected_kb_id,
+                                        file_name=filename,
+                                        file_bytes=content_bytes,
+                                        content_type=content_type,
+                                        title=title,
+                                    )
+                                    status = res.get("status")
+                                    if status == "READY":
+                                        st.success(
+                                            f"文档「{filename}」上传并索引成功！"
+                                            f"切分为 {res.get('chunk_count', 0)} 个知识块。"
+                                        )
+                                        st.rerun()
+                                    elif status == "FAILED":
+                                        err_msg = res.get("error_message") or "文件内容解析或嵌入失败"
+                                        st.warning(
+                                            f"文档「{filename}」已上传保存，但索引处理失败: {err_msg}。"
+                                            "请检查文件格式或在下方列表点击重试。"
+                                        )
+                                        st.rerun()
+                                    else:
+                                        st.info(
+                                            f"文档「{filename}」已上传，当前状态: {status or 'PROCESSING'}。"
+                                        )
+                                        st.rerun()
+                                except Exception as exc:
+                                    st.error(f"上传并处理文档失败: {exc}")
+
+        # Document List Section
+        st.markdown("##### 📄 已索引文档列表 (Documents)")
+        try:
+            docs = client.list_knowledge_base_documents(selected_kb_id)
+        except Exception as exc:
+            st.error(f"获取文档列表失败: {exc}")
+            docs = []
+
+        if not docs:
+            st.info("该知识库中暂无文档，请在上方上传文档。")
+            return
+
+        for doc in docs:
+            doc_id = doc.get("source_document_id", "")
+            doc_status = doc.get("status", "READY")
+            doc_title = doc.get("title") or "未命名文档"
+            chunk_count = doc.get("chunk_count", 0)
+            media_type = doc.get("media_type", "text/plain")
+            created_at = doc.get("created_at", "")
+            err_msg = doc.get("error_message")
+
+            if doc_status == "READY":
+                badge_icon = "🟢"
+                status_label = "就绪 (READY)"
+            elif doc_status == "FAILED":
+                badge_icon = "🔴"
+                status_label = "处理失败 (FAILED)"
+            elif doc_status == "PROCESSING":
+                badge_icon = "🟡"
+                status_label = "处理中 (PROCESSING)"
+            else:
+                badge_icon = "⚪"
+                status_label = doc_status
+
+            with st.expander(
+                f"{badge_icon} **{doc_title}** [{status_label}] · `{chunk_count} 个分块`",
+                expanded=(doc_status == "FAILED"),
+            ):
+                st.markdown(f"- **文档 ID**: `{doc_id}`")
+                st.markdown(f"- **媒体类型**: `{media_type}`")
+                st.markdown(f"- **生成知识块**: `{chunk_count}` 块 (含 BM25 词袋与语义向量)")
+                st.markdown(f"- **上传时间**: `{created_at}`")
+
+                if err_msg:
+                    st.error(f"❌ 失败原因: {err_msg}")
+
+                if doc_status == "FAILED":
+                    if st.button("🔄 重试解析与嵌入 (Retry)", key=f"retry_doc_{doc_id}", type="primary"):
+                        with st.spinner("正在重新解析与向量化..."):
+                            try:
+                                retry_res = client.retry_knowledge_base_document(selected_kb_id, doc_id)
+                                status = retry_res.get("status")
+                                if status == "READY":
+                                    st.success(
+                                        f"重试成功！状态已更新为 READY，生成 {retry_res.get('chunk_count', 0)} 个知识块。"
+                                    )
+                                    st.rerun()
+                                else:
+                                    err_msg = retry_res.get("error_message") or "处理未成功"
+                                    st.warning(
+                                        f"重试处理完成，但状态仍为 {status or 'FAILED'}: {err_msg}。"
+                                    )
+                                    st.rerun()
+                            except Exception as exc:
+                                st.error(f"重试失败: {exc}")

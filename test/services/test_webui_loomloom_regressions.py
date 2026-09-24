@@ -18,6 +18,12 @@ from app.services import llm, loomloom
 MAIN = Path(__file__).parents[2] / "webui" / "Main.py"
 
 
+def legacy_app_test(timeout=30):
+    app = AppTest.from_file(str(MAIN), default_timeout=timeout)
+    app.session_state["app_view_mode"] = "legacy_video_generation"
+    return app
+
+
 def helpers(state):
     """只执行待测 helper，避免为了验证缓存语义启动整页或访问外部服务。"""
     names = {
@@ -143,7 +149,7 @@ def test_batch_script_and_video_use_settings_key_without_local_llm():
         patch.object(loomloom.LoomLoomVideoBackend, "quote", return_value=quote),
         patch.object(llm, "generate_script") as generate,
     ):
-        app = AppTest.from_file(str(MAIN), default_timeout=30)
+        app = legacy_app_test()
         app.session_state["ui_language"] = "en"
         app.run()
         fields = [x for x in app.text_input if x.key == "loomloom_user_api_token"]
@@ -195,7 +201,7 @@ def quote_page():
             patch.object(loomloom.LoomLoomVideoBackend, "quote")
         )
         submit = stack.enter_context(patch("app.services.webui_task.submit_generation"))
-        app = AppTest.from_file(str(MAIN), default_timeout=30)
+        app = legacy_app_test()
         app.session_state["ui_language"] = "en"
         app.session_state["video_subject"] = "AI daily life"
         app.session_state["video_script"] = "AI helps people every day."
@@ -356,7 +362,7 @@ def test_batch_candidate_autofill_once_preserves_manual_count(script):
         patch.object(config, "ui", {"video_clip_duration": 3}),
         patch.object(config, "try_save_config", return_value=True),
     ):
-        app = AppTest.from_file(str(MAIN), default_timeout=30)
+        app = legacy_app_test()
         app.session_state["ui_language"] = "en"
         app.session_state["loomloom_script_candidates"] = (candidate,)
         app.run()
@@ -372,7 +378,9 @@ def test_batch_candidate_autofill_once_preserves_manual_count(script):
 
 def test_reference_price_copy_does_not_promise_quote_is_final():
     for locale in ("zh", "en"):
-        messages = json.loads((MAIN.parent / "i18n" / f"{locale}.json").read_text())
+        messages = json.loads(
+            (MAIN.parent / "i18n" / f"{locale}.json").read_text(encoding="utf-8")
+        )
         # 价格仅作选择参考，避免与“不完整估算仍可能扣费”的警告矛盾。
         text = messages["Translation"]["AI Video Model Reference Price"]
         assert ("实际模型调用" if locale == "zh" else "actual model usage") in text

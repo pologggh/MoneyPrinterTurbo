@@ -14,6 +14,7 @@ from app.domain.planner import (
     PlannerInput,
     PlannerOutputInvalidError,
     PlannerOutputSchemaError,
+    PlannerProviderError,
 )
 
 
@@ -513,6 +514,23 @@ def test_bounded_retry_behavior():
 
     # max_retries=2 means initial attempt (1) + 2 retries = 3 calls total
     assert failing_calls == 3
+
+
+def test_provider_error_is_preserved_without_json_repair_retries():
+    """Provider failures are not malformed planner JSON and must remain diagnosable."""
+    call_count = 0
+
+    def unavailable_llm(prompt: str) -> str:
+        nonlocal call_count
+        call_count += 1
+        return "Error: Connection error."
+
+    planner = ContentPlanner(llm_caller=unavailable_llm, max_retries=2)
+
+    with pytest.raises(PlannerProviderError, match="Connection error"):
+        planner.plan(PlannerInput(topic="Quantum", target_video_duration=30.0))
+
+    assert call_count == 1
 
 
 # 11. Existing Phase 1 plan diff works seamlessly on planner-produced revisions

@@ -96,6 +96,120 @@ class AssetRoutePlanExecutionService:
                 f"AssetRoutePlan {plan.asset_route_plan_id} has status {plan.status.value}, expected READY"
             )
 
+        # Check if an existing run exists for this plan (e.g. from prior attempt after worker crash/restart)
+        existing_run: ExecutionRun | None = None
+        if run_id is None:
+            with self._session_scope() as session:
+                exec_repo = ExecutionRepository(session)
+                existing_runs = exec_repo.list_runs_for_plan(plan.asset_route_plan_id)
+                existing_run = next(
+                    (
+                        item
+                        for item in existing_runs
+                        if item.status in (
+                            ExecutionStatus.CREATED,
+                            ExecutionStatus.RUNNING,
+                            ExecutionStatus.NEEDS_RECOVERY,
+                        )
+                    ),
+                    None,
+                )
+        else:
+            with self._session_scope() as session:
+                exec_repo = ExecutionRepository(session)
+                existing_run = exec_repo.get_execution_run(run_id)
+
+        if existing_run is not None:
+            from app.services.attempt_recovery_service import AttemptRecoveryService
+            rec_svc = AttemptRecoveryService(
+                adapter_registry=self._shot_execution_service._adapter_registry
+            )
+            with self._session_scope() as session:
+                recovery_report = rec_svc.recover_run(
+                    run_id=existing_run.execution_run_id,
+                    session=session,
+                    storage_base_dir=storage_base_dir,
+                )
+                session.commit()
+
+            safe_resubmit_shot_ids = {
+                item["shot_id"]
+                for item in recovery_report["recovery_results"]
+                if item["action"] == "SAFE_TO_RESUBMIT_SAME_ATTEMPT"
+            }
+            if safe_resubmit_shot_ids:
+                with self._session_scope() as session:
+                    exec_repo = ExecutionRepository(session)
+                    recoverable_execs = {
+                        item.shot_id: item
+                        for item in exec_repo.list_shot_executions_for_run(
+                            existing_run.execution_run_id
+                        )
+                        if item.shot_id in safe_resubmit_shot_ids
+                    }
+                entries_by_shot = {item.shot_id: item for item in plan.shot_routes}
+                for shot_id in safe_resubmit_shot_ids:
+                    shot_exec = recoverable_execs.get(shot_id)
+                    entry = entries_by_shot.get(shot_id)
+                    if shot_exec is None or entry is None:
+                        continue
+                    self._resume_safe_same_key_shot(
+                        shot_execution=shot_exec,
+                        entry=entry,
+                        storage_base_dir=storage_base_dir,
+                    )
+                self._reconcile_existing_run(existing_run.execution_run_id)
+
+            with self._session_scope() as session:
+                exec_repo = ExecutionRepository(session)
+                refreshed_run = exec_repo.get_execution_run(existing_run.execution_run_id)
+                refreshed_execs = exec_repo.list_shot_executions_for_run(existing_run.execution_run_id)
+
+            should_return_existing = bool(
+                refreshed_run
+                and (
+                    refreshed_run.status in (
+                        ExecutionStatus.COMPLETED,
+                        ExecutionStatus.NEEDS_RECOVERY,
+                    )
+                    # An explicitly requested run is an inspection/recovery of that
+                    # immutable run, not authorization to replace it in-place.
+                    or (
+                        run_id is not None
+                        and refreshed_run.status == ExecutionStatus.FAILED
+                    )
+                )
+            )
+            if refreshed_run and should_return_existing:
+                shot_summaries = []
+                for se in refreshed_execs:
+                    shot_summaries.append(
+                        ShotExecutionSummary(
+                            shot_id=se.shot_id,
+                            shot_revision_id=se.shot_revision_id,
+                            shot_execution_id=se.shot_execution_id,
+                            asset_version_id=se.produced_asset_version_id,
+                            result_type="RECOVERED",
+                            status=se.status,
+                            failure_reason=se.error_message,
+                            attempts_count=len(se.attempt_ids),
+                        )
+                    )
+                return ExecutionRunResult(
+                    execution_run_id=refreshed_run.execution_run_id,
+                    asset_route_plan_id=plan.asset_route_plan_id,
+                    storyboard_snapshot_id=plan.storyboard_snapshot_id,
+                    state=refreshed_run.status,
+                    total_shots=refreshed_run.total_shots,
+                    generated_shots=refreshed_run.succeeded_shots,
+                    reused_shots=refreshed_run.reused_shots,
+                    failed_shots=refreshed_run.failed_shots,
+                    recovery_required_shots=refreshed_run.recovery_required_shots,
+                    shot_results=tuple(shot_summaries),
+                    started_at=refreshed_run.started_at,
+                    finished_at=refreshed_run.finished_at or datetime.now(UTC),
+                )
+
         execution_run_id = run_id or str(uuid4())
         started_at = datetime.now(UTC)
         total_shots = len(plan.shot_routes)
@@ -447,7 +561,7 @@ class AssetRoutePlanExecutionService:
             logger.exception(
                 f"Unhandled exception during shot execution for shot {entry.shot_id}: {shot_exc}"
             )
-            updated_shot_exec = shot_exec.record_failure(
+            updated_shot_exec = shot_exec.mark_submission_unknown(
                 error_code="UNHANDLED_SHOT_EXCEPTION",
                 error_message=f"Shot execution crashed: {shot_exc}",
             )
@@ -535,6 +649,85 @@ class AssetRoutePlanExecutionService:
             attempts_count=len(attempts),
         )
         return summary, updated_shot_exec.status
+
+    def _resume_safe_same_key_shot(
+        self,
+        shot_execution: ShotExecution,
+        entry: Any,
+        storage_base_dir: Path | str,
+    ) -> None:
+        """Resume a recovery-approved shot and durably persist its outcome."""
+        updated, attempts, asset_version = self._shot_execution_service.execute_shot(
+            shot_execution=shot_execution,
+            request=entry.asset_routing_request,
+            storage_base_dir=storage_base_dir,
+            session_factory=self._session_factory,
+        )
+        with self._session_scope() as session:
+            repo = ExecutionRepository(session)
+            for attempt in attempts:
+                repo.save_or_update_execution_attempt(attempt)
+                if attempt.provider_receipt is not None:
+                    repo.save_provider_receipt(attempt.provider_receipt)
+                if attempt.attempt_result is not None:
+                    repo.save_attempt_result(attempt.attempt_result)
+                repo.record_transition(
+                    ExecutionTransition(
+                        entity_type="EXECUTION_ATTEMPT",
+                        entity_id=attempt.execution_attempt_id,
+                        from_state=ExecutionAttemptStatus.SUBMITTING.value,
+                        to_state=attempt.status.value,
+                        reason_code=attempt.error_code or "RECOVERY_ATTEMPT_FINISHED",
+                    )
+                )
+            if asset_version is not None:
+                repo.add_shot_asset_version(asset_version)
+            repo.update_shot_execution(updated)
+            repo.record_transition(
+                ExecutionTransition(
+                    entity_type="SHOT_EXECUTION",
+                    entity_id=updated.shot_execution_id,
+                    from_state=ShotExecutionStatus.NEEDS_RECOVERY.value,
+                    to_state=updated.status.value,
+                    reason_code=updated.error_code or "SAFE_SAME_KEY_RESUBMISSION",
+                )
+            )
+
+    def _reconcile_existing_run(self, run_id: str) -> None:
+        """Recompute a recovered run from its durable shot executions."""
+        with self._session_scope() as session:
+            repo = ExecutionRepository(session)
+            executions = repo.list_shot_executions_for_run(run_id)
+            succeeded = sum(
+                item.status == ShotExecutionStatus.SUCCEEDED for item in executions
+            )
+            reused = sum(item.status == ShotExecutionStatus.REUSED for item in executions)
+            failed = sum(
+                item.status in (ShotExecutionStatus.FAILED, ShotExecutionStatus.EXHAUSTED)
+                for item in executions
+            )
+            recovery_required = sum(
+                item.status in (
+                    ShotExecutionStatus.NEEDS_RECOVERY,
+                    ShotExecutionStatus.SUBMISSION_OUTCOME_UNKNOWN,
+                )
+                for item in executions
+            )
+            if recovery_required:
+                status = ExecutionStatus.NEEDS_RECOVERY
+            elif succeeded + reused == len(executions):
+                status = ExecutionStatus.COMPLETED
+            else:
+                status = ExecutionStatus.FAILED
+            repo.update_execution_run_status(
+                run_id=run_id,
+                status=status,
+                succeeded_shots=succeeded,
+                reused_shots=reused,
+                failed_shots=failed,
+                recovery_required_shots=recovery_required,
+                finished_at=datetime.now(UTC),
+            )
 
     def get_execution_run(self, run_id: str) -> ExecutionRun | None:
         """Loads an ExecutionRun by ID."""

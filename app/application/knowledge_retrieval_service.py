@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import os
 from typing import Any, Sequence
 
 from sqlalchemy.orm import Session
@@ -19,8 +20,11 @@ from app.domain.evidence import (
     compute_evidence_id,
     compute_sha256,
 )
+from app.domain.knowledge_base import ChunkEmbedding
 from app.persistence.repositories import (
+    EmbeddingRepository,
     EvidenceRepository,
+    KnowledgeBaseRepository,
     KnowledgeVideoTaskRepository,
 )
 from app.services.knowledge.bm25_retriever import (
@@ -36,6 +40,14 @@ from app.services.knowledge.document_parser import (
     DocumentParser,
     ParsedKnowledgeDocument,
 )
+from app.services.knowledge.embedding_provider import (
+    EmbeddingProvider,
+    get_embedding_provider,
+)
+from app.services.knowledge.hybrid_retriever import (
+    DEFAULT_HYBRID_POLICY_VERSION,
+    HybridRetriever,
+)
 from app.services.knowledge.source_fetcher import SourceFetcher
 
 
@@ -48,13 +60,46 @@ class KnowledgeProcessingService:
         fetcher: SourceFetcher | None = None,
         parser: DocumentParser | None = None,
         chunker: KnowledgeChunker | None = None,
+        embedding_provider: EmbeddingProvider | None = None,
     ) -> None:
         self._session = session
         self.evidence_repo = EvidenceRepository(session)
         self.task_repo = KnowledgeVideoTaskRepository(session)
+        self.embedding_repo = EmbeddingRepository(session)
         self.fetcher = fetcher or SourceFetcher()
         self.parser = parser or DocumentParser()
         self.chunker = chunker or KnowledgeChunker()
+        self.embedding_provider = embedding_provider or get_embedding_provider()
+
+    def _generate_and_save_embeddings(self, chunks: Sequence[KnowledgeChunk]) -> None:
+        if not self.embedding_provider or not chunks:
+            return
+        provider_name = self.embedding_provider.provider_name
+        model_name = self.embedding_provider.model_name
+
+        existing = self.embedding_repo.list_embeddings_for_chunks(
+            [c.chunk_id for c in chunks],
+            provider=provider_name,
+            model=model_name,
+        )
+        existing_cids = {e.chunk_id for e in existing}
+        needed_chunks = [c for c in chunks if c.chunk_id not in existing_cids]
+        if not needed_chunks:
+            return
+
+        texts = [c.normalized_text for c in needed_chunks]
+        vectors = self.embedding_provider.embed_texts(texts)
+        embeddings_to_save: list[ChunkEmbedding] = []
+        for chunk, vec in zip(needed_chunks, vectors):
+            emb = ChunkEmbedding.create(
+                chunk_id=chunk.chunk_id,
+                provider=provider_name,
+                model=model_name,
+                vector=vec,
+                text_hash=chunk.text_hash,
+            )
+            embeddings_to_save.append(emb)
+        self.embedding_repo.save_chunk_embeddings(embeddings_to_save)
 
     def process_source_document(
         self,
@@ -67,6 +112,7 @@ class KnowledgeProcessingService:
         - Parses raw content / snapshot into structural blocks.
         - Splits into deterministic KnowledgeChunks.
         - Persists chunks to storage.
+        - Generates and persists chunk vector embeddings.
         - Marks SourceDocument READY (or FAILED if error occurs).
         """
         source = self.evidence_repo.get_source_document(source_document_id)
@@ -96,6 +142,12 @@ class KnowledgeProcessingService:
                 )
                 self.evidence_repo.save_source_document(source)
 
+            # File Acquisition
+            if source.source_type == SourceType.FILE and not content_to_parse and not source.content_snapshot:
+                if source.source_locator and os.path.isfile(source.source_locator):
+                    with open(source.source_locator, "rb") as f:
+                        content_to_parse = f.read()
+
             # Document Parsing
             parsed = self.parser.parse_source_document(source, content_to_parse)
 
@@ -105,6 +157,12 @@ class KnowledgeProcessingService:
             # Persistence
             if chunks:
                 self.evidence_repo.save_knowledge_chunks(chunks)
+                if self.embedding_provider:
+                    try:
+                        self._generate_and_save_embeddings(chunks)
+                    except Exception as emb_exc:
+                        from loguru import logger
+                        logger.warning(f"Failed to generate embeddings for source '{source_document_id}': {emb_exc}")
 
             # Update Source status to READY
             if source.status != SourceStatus.READY:
@@ -146,17 +204,21 @@ class KnowledgeProcessingService:
 
 
 class KnowledgeRetrievalService:
-    """Scoped knowledge retrieval engine backed by deterministic Okapi BM25 and RetrievalSnapshots."""
+    """Scoped knowledge retrieval engine backed by deterministic Okapi BM25, exact Cosine Vector search, and RRF."""
 
     def __init__(
         self,
         session: Session,
-        retrieval_policy_version: str = DEFAULT_RETRIEVAL_POLICY_VERSION,
+        retrieval_policy_version: str = DEFAULT_HYBRID_POLICY_VERSION,
+        embedding_provider: EmbeddingProvider | None = None,
     ) -> None:
         self._session = session
         self.evidence_repo = EvidenceRepository(session)
         self.task_repo = KnowledgeVideoTaskRepository(session)
+        self.kb_repo = KnowledgeBaseRepository(session)
+        self.embedding_repo = EmbeddingRepository(session)
         self.retrieval_policy_version = retrieval_policy_version
+        self.embedding_provider = embedding_provider or get_embedding_provider()
 
     def retrieve(
         self,
@@ -166,11 +228,11 @@ class KnowledgeRetrievalService:
         source_scope_ids: Sequence[str] | None = None,
         auto_create_evidence_items: bool = True,
     ) -> RetrievalSnapshot:
-        """Executes scoped lexical retrieval for a task, creating a frozen RetrievalSnapshot and stable EvidenceItems.
+        """Executes scoped hybrid retrieval for a task, creating a frozen RetrievalSnapshot and stable EvidenceItems.
 
-        - Strictly enforces task scoping: only sources associated with task_id can be queried.
+        - Strictly enforces task scoping: only sources associated with task_id (directly or via active KBs) can be queried.
         - If source_scope_ids is provided, verifies that each source belongs to task_id.
-        - Searches using BM25Index.
+        - Searches using HybridRetriever (BM25 + Cosine Vector + RRF).
         - Reuses or creates EvidenceItem records for top candidate chunks.
         - Freezes and persists RetrievalSnapshot.
         """
@@ -178,8 +240,11 @@ class KnowledgeRetrievalService:
         if task is None:
             raise ValueError(f"Task '{task_id}' not found.")
 
-        # Get all sources associated with this task
-        task_sources = self.evidence_repo.list_sources_for_task(task_id)
+        # Get all sources associated with this task (merging direct task sources + attached KB sources)
+        task_sources = self.kb_repo.list_sources_for_task_with_kbs(task_id)
+        if not task_sources:
+            task_sources = self.evidence_repo.list_sources_for_task(task_id)
+
         valid_source_ids = {s.source_document_id for s in task_sources}
         source_doc_map = {s.source_document_id: s for s in task_sources}
 
@@ -222,9 +287,27 @@ class KnowledgeRetrievalService:
             self._session.commit()
             return snapshot
 
-        # Build BM25 index and search
-        index = BM25Index(chunks, retrieval_policy_version=self.retrieval_policy_version)
-        candidates = index.search(query=query, top_k=top_k, source_scope_ids=effective_scopes)
+        # Load embeddings for the allowed sources if provider is available
+        embeddings: list[ChunkEmbedding] = []
+        if self.embedding_provider:
+            embeddings = self.embedding_repo.list_embeddings_for_sources(
+                effective_scopes,
+                provider=self.embedding_provider.provider_name,
+                model=self.embedding_provider.model_name,
+            )
+
+        # Build HybridRetriever and search
+        retriever = HybridRetriever(
+            chunks=chunks,
+            embeddings=embeddings,
+            embedding_provider=self.embedding_provider,
+            retrieval_policy_version=self.retrieval_policy_version,
+        )
+        candidates, mode = retriever.search(
+            query=query,
+            top_k=top_k,
+            source_scope_ids=effective_scopes,
+        )
 
         # Stable EvidenceItem creation / resolution
         selected_evidence_ids: list[str] = []
@@ -233,12 +316,13 @@ class KnowledgeRetrievalService:
                 src_doc = source_doc_map.get(cand.source_document_id)
                 if not src_doc:
                     continue
+                extraction_method = f"RETRIEVAL_{cand.retrieval_method}"
                 new_ev = EvidenceItem.create(
                     source_document=src_doc,
                     original_excerpt=cand.excerpt,
                     locator=cand.locator,
                     evidence_role=EvidenceRole.FACTUAL_SUPPORT,
-                    extraction_method="RETRIEVAL_LEXICAL_BM25",
+                    extraction_method=extraction_method,
                     confidence=1.0,
                 )
                 ev_id = new_ev.evidence_id
@@ -255,6 +339,7 @@ class KnowledgeRetrievalService:
             candidates=candidates,
             selected_evidence_ids=selected_evidence_ids,
             retrieval_policy_version=self.retrieval_policy_version,
+            effective_retrieval_mode=mode,
         )
         self.evidence_repo.save_retrieval_snapshot(snapshot)
         self._session.commit()

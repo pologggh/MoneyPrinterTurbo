@@ -13,7 +13,7 @@ from app.domain.stage_execution import StageExecution
 from app.domain.task_artifact import TaskArtifactRef
 from app.domain.workflow_job import WorkflowJob
 from app.domain.workflow_state import ArtifactType, JobStatus, Stage, WorkflowPolicyType
-from app.persistence.models import Base
+from app.persistence.models import Base, TaskArtifactRefORM
 from app.persistence.repositories import (
     KnowledgeVideoTaskRepository,
     StageExecutionRepository,
@@ -268,3 +268,38 @@ def test_alembic_migration_0015_upgrade_downgrade(tmp_path, monkeypatch):
     # Re-upgrade to 0015
     command.upgrade(cfg, "0015_stage_worker_and_task_artifacts")
 
+
+def test_alembic_migration_0015_recovers_after_sqlite_partial_ddl(tmp_path, monkeypatch):
+    """A retry must finish when SQLite retained the first non-transactional DDL step."""
+    from pathlib import Path
+
+    from alembic import command
+    from alembic.config import Config
+    from sqlalchemy import inspect
+
+    db_path = tmp_path / "partial_migration.db"
+    db_url = f"sqlite:///{db_path.as_posix()}"
+    monkeypatch.setenv("DATABASE_URL", db_url)
+    project_root = Path(__file__).resolve().parent.parent.parent
+    cfg = Config(str(project_root / "alembic.ini"))
+    cfg.set_main_option("sqlalchemy.url", db_url)
+    cfg.set_main_option("script_location", str(project_root / "migrations"))
+
+    command.upgrade(cfg, "0014_knowledge_video_workflow")
+
+    engine = create_engine(db_url)
+    TaskArtifactRefORM.__table__.create(engine)
+    engine.dispose()
+
+    command.upgrade(cfg, "0015_stage_worker_and_task_artifacts")
+
+    engine = create_engine(db_url)
+    inspector = inspect(engine)
+    assert "task_artifact_refs" in inspector.get_table_names()
+    assert "input_task_artifact_ref_id" in {
+        column["name"] for column in inspector.get_columns("workflow_jobs")
+    }
+    assert "output_task_artifact_ref_id" in {
+        column["name"] for column in inspector.get_columns("stage_executions")
+    }
+    engine.dispose()

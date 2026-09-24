@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import os
 import re
 from typing import Any, Sequence
 import unicodedata
@@ -14,6 +15,7 @@ from app.domain.evidence import (
     DocumentTextNotExtractableError,
     EvidenceLocator,
     SourceContentUnavailableError,
+    UnsupportedSourceTypeError,
 )
 
 DEFAULT_PROCESSING_VERSION = "knowledge_processing_v1"
@@ -486,9 +488,14 @@ class DocumentParser:
         locator = (getattr(source_document, "source_locator", None) or "").lower()
 
         if payload is None:
-            raise SourceContentUnavailableError(
-                f"Source document '{source_document.source_document_id}' has no content snapshot and no raw content was provided."
-            )
+            raw_loc = getattr(source_document, "source_locator", None)
+            if raw_loc and os.path.isfile(raw_loc):
+                with open(raw_loc, "rb") as f:
+                    payload = f.read()
+            else:
+                raise SourceContentUnavailableError(
+                    f"Source document '{source_document.source_document_id}' has no content snapshot and no raw content was provided."
+                )
 
         if "pdf" in media_type or locator.endswith(".pdf"):
             bytes_data = payload.encode("utf-8") if isinstance(payload, str) else payload
@@ -502,6 +509,10 @@ class DocumentParser:
         elif "html" in media_type or locator.endswith(".html") or locator.endswith(".htm") or source_type == "URL":
             str_data = payload if isinstance(payload, str) else payload.decode("utf-8", errors="replace")
             return self.parse_html(source_document, str_data)
-        else:
+        elif "text" in media_type or locator.endswith(".txt") or source_type in ("TEXT", "SourceType.TEXT") or locator.startswith("inline:"):
             str_data = payload if isinstance(payload, str) else payload.decode("utf-8", errors="replace")
             return self.parse_text(source_document, str_data)
+        else:
+            raise UnsupportedSourceTypeError(
+                f"Cannot parse unsupported format for source '{source_document.source_document_id}' with media_type '{media_type}' and locator '{locator}'."
+            )

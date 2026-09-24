@@ -31,10 +31,12 @@ def test_metaso_source_requires_confirmation_and_never_enters_task_params():
     )
     with (
         patch.object(config, "app", test_config),
+        patch.object(config, "ui", dict(config.ui, voice_mode="tts")),
         patch.object(config, "try_save_config", return_value=True),
         patch("app.services.webui_task.submit_generation") as submit_generation,
     ):
         app = AppTest.from_file(str(WEBUI_MAIN), default_timeout=60)
+        app.session_state["app_view_mode"] = "legacy_video_generation"
         app.session_state["ui_language"] = "en"
         app.run()
 
@@ -60,7 +62,7 @@ def test_metaso_source_requires_confirmation_and_never_enters_task_params():
         _widget_by_key(app.checkbox, "metaso_minimax_confirm_charge").check().run()
         _widget_by_key(app.button, "generate_video_button").click().run()
 
-        assert submit_generation.call_count == 1
+        assert submit_generation.call_count == 1, [item.value for item in app.error]
         submitted_params = submit_generation.call_args.kwargs["params"]
         assert submitted_params.video_source == "metaso_minimax"
         assert submitted_params.video_clip_duration == 15
@@ -83,6 +85,7 @@ def test_invalid_metaso_resolution_requires_an_explicit_replacement():
         patch.object(config, "try_save_config", return_value=True),
     ):
         app = AppTest.from_file(str(WEBUI_MAIN), default_timeout=60)
+        app.session_state["app_view_mode"] = "legacy_video_generation"
         app.session_state["ui_language"] = "zh"
         app.session_state["settings_dialog_open"] = True
         app.session_state["settings_dialog_target_tab"] = "material"
@@ -115,6 +118,7 @@ def test_metaso_upload_voiceover_uses_actual_audio_billing_copy():
         patch.object(config, "try_save_config", return_value=True),
     ):
         app = AppTest.from_file(str(WEBUI_MAIN), default_timeout=60)
+        app.session_state["app_view_mode"] = "legacy_video_generation"
         app.session_state["ui_language"] = "en"
         app.run()
 

@@ -26,7 +26,6 @@ def headless_task_app(tmp_path, monkeypatch):
 
     monkeypatch.setattr(utils, "task_dir", lambda: str(tasks_dir))
     monkeypatch.setattr(sm.state, "get_all_tasks", lambda *_args, **_kwargs: ([], 0))
-    monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.delenv("DISPLAY", raising=False)
     monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
 
@@ -34,7 +33,11 @@ def headless_task_app(tmp_path, monkeypatch):
     # 隔离，防止控件初始化意外写入开发者的 config.toml。
     with patch.object(config, "try_save_config", return_value=True):
         app = AppTest.from_file(str(WEBUI_MAIN), default_timeout=60)
+        app.session_state["app_view_mode"] = "legacy_video_generation"
         app.run()
+        # Import the Windows media stack before emulating a headless Linux host;
+        # NumPy legitimately reads sys.platform during its first import.
+        monkeypatch.setattr(sys, "platform", "linux")
         yield app, video_file
 
 
@@ -66,6 +69,5 @@ def test_headless_open_folder_shows_host_mapped_path(headless_task_app):
     app.run()
 
     assert not app.exception
-    assert any(
-        "./storage/tasks/headless-test" in toast.value for toast in app.get("toast")
-    )
+    toasts = [toast.value for toast in app.get("toast")]
+    assert any("./storage/tasks/headless-test" in toast for toast in toasts), toasts

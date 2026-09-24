@@ -20,6 +20,7 @@ def ui(monkeypatch):
     monkeypatch.setattr(config, "save_config", Mock())
     monkeypatch.setattr(config, "try_save_config", Mock(return_value=True))
     page = AppTest.from_file(str(Path(__file__).parents[2] / "webui/Main.py"), default_timeout=30)
+    page.session_state["app_view_mode"] = "legacy_video_generation"
     page.session_state["ui_language"] = "zh"
     return page
 

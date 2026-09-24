@@ -12,10 +12,11 @@ from sqlalchemy.pool import StaticPool
 
 from app.config import config
 from app.controllers.v1.knowledge_video import router
+from app.domain.knowledge_base import KnowledgeBase
 from app.domain.knowledge_video_task import KnowledgeVideoTask
 from app.domain.workflow_state import TaskStatus, WorkflowPolicyType
 from app.persistence.models import Base
-from app.persistence.repositories import KnowledgeVideoTaskRepository
+from app.persistence.repositories import KnowledgeBaseRepository, KnowledgeVideoTaskRepository
 
 
 @pytest.fixture
@@ -200,8 +201,35 @@ def test_register_evidence_metadata_credential_redaction(client, test_db_session
     assert meta["custom_notes"] == "public research notes"
 
 
-def test_register_knowledge_base_source_honest_failure_api(client, test_db_session):
-    """POST /evidence with KNOWLEDGE_BASE source returns 400 with honest not-implemented message."""
+def test_register_knowledge_base_source_api_success(client, test_db_session):
+    """POST /evidence with KNOWLEDGE_BASE source attaches active KB to task."""
+    task_id = f"task_{uuid4().hex[:8]}"
+    task_repo = KnowledgeVideoTaskRepository(test_db_session)
+    task_repo.save_task(
+        KnowledgeVideoTask.create(task_id=task_id, topic="KB Test", target_duration=60.0, workflow_policy=WorkflowPolicyType.AUTO)
+    )
+    kb_repo = KnowledgeBaseRepository(test_db_session)
+    kb = KnowledgeBase.create(name="AI Systems KB")
+    kb_repo.save_knowledge_base(kb)
+    test_db_session.commit()
+    kb_id = kb.knowledge_base_id
+
+    resp = client.post(
+        f"/api/v1/knowledge-video-tasks/{task_id}/evidence",
+        json={
+            "source_type": "KNOWLEDGE_BASE",
+            "kb_id": kb_id,
+        },
+    )
+    assert resp.status_code == 201
+    data = resp.json()["data"]
+    assert data["task_id"] == task_id
+    assert data["knowledge_base_id"] == kb_id
+    assert data["status"] == "ATTACHED"
+
+
+def test_register_knowledge_base_source_api_not_found(client, test_db_session):
+    """POST /evidence with missing KNOWLEDGE_BASE returns 404."""
     task_id = f"task_{uuid4().hex[:8]}"
     task_repo = KnowledgeVideoTaskRepository(test_db_session)
     task_repo.save_task(
@@ -213,11 +241,34 @@ def test_register_knowledge_base_source_honest_failure_api(client, test_db_sessi
         f"/api/v1/knowledge-video-tasks/{task_id}/evidence",
         json={
             "source_type": "KNOWLEDGE_BASE",
-            "kb_id": "kb_collection_999",
+            "kb_id": "kb_nonexistent_999",
         },
     )
-    assert resp.status_code == 400
-    assert "Knowledge Base subsystem is not yet implemented" in resp.json()["detail"]
+    assert resp.status_code == 404
+
+
+def test_register_knowledge_base_source_api_archived_conflict(client, test_db_session):
+    """POST /evidence with archived KNOWLEDGE_BASE returns 409."""
+    task_id = f"task_{uuid4().hex[:8]}"
+    task_repo = KnowledgeVideoTaskRepository(test_db_session)
+    task_repo.save_task(
+        KnowledgeVideoTask.create(task_id=task_id, topic="KB Test", target_duration=60.0, workflow_policy=WorkflowPolicyType.AUTO)
+    )
+    kb_repo = KnowledgeBaseRepository(test_db_session)
+    kb = KnowledgeBase.create(name="Archived KB")
+    kb_repo.save_knowledge_base(kb)
+    kb_repo.archive_knowledge_base(kb.knowledge_base_id)
+    test_db_session.commit()
+    kb_id = kb.knowledge_base_id
+
+    resp = client.post(
+        f"/api/v1/knowledge-video-tasks/{task_id}/evidence",
+        json={
+            "source_type": "KNOWLEDGE_BASE",
+            "kb_id": kb_id,
+        },
+    )
+    assert resp.status_code == 409
 
 
 def test_register_url_with_whitespace_trimmed(client, test_db_session):

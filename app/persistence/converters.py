@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from app.domain.asset_router import AssetRoutePlan
@@ -1729,6 +1729,7 @@ def retrieval_snapshot_to_orm(snapshot: Any) -> Any:
         source_scope_ids_json=list(snapshot.source_scope_ids),
         retrieval_policy_version=snapshot.retrieval_policy_version,
         processing_version=snapshot.processing_version,
+        effective_retrieval_mode=getattr(snapshot, "effective_retrieval_mode", "BM25_ONLY") or "BM25_ONLY",
         candidates_json=candidates_list,
         selected_evidence_ids_json=list(snapshot.selected_evidence_ids),
         content_fingerprint=snapshot.content_fingerprint,
@@ -1751,6 +1752,7 @@ def retrieval_snapshot_from_orm(orm: Any) -> Any:
         source_scope_ids=tuple(orm.source_scope_ids_json or []),
         retrieval_policy_version=orm.retrieval_policy_version,
         processing_version=orm.processing_version,
+        effective_retrieval_mode=getattr(orm, "effective_retrieval_mode", "BM25_ONLY") or "BM25_ONLY",
         candidates=tuple(candidates),
         selected_evidence_ids=tuple(orm.selected_evidence_ids_json or []),
         content_fingerprint=orm.content_fingerprint,
@@ -2015,6 +2017,70 @@ def delivery_manifest_from_orm(orm: Any) -> Any:
         execution_report_path=orm.execution_report_path,
         execution_report_hash=orm.execution_report_hash,
         delivery_params_snapshot=orm.delivery_params_snapshot_json or {},
+        created_at=orm.created_at,
+    )
+
+
+def knowledge_base_to_orm(kb: Any) -> Any:
+    """Converts a domain KnowledgeBase into a KnowledgeBaseORM record."""
+    from app.persistence.models import KnowledgeBaseORM
+
+    return KnowledgeBaseORM(
+        knowledge_base_id=kb.knowledge_base_id,
+        name=kb.name,
+        description=kb.description,
+        status=kb.status.value if hasattr(kb.status, "value") else str(kb.status),
+        metadata_json=dict(kb.metadata_json or {}),
+        created_at=kb.created_at,
+        updated_at=kb.updated_at,
+    )
+
+
+def knowledge_base_from_orm(orm: Any) -> Any:
+    """Reconstructs a domain KnowledgeBase from a KnowledgeBaseORM record."""
+    from app.domain.knowledge_base import KnowledgeBase, KnowledgeBaseStatus
+
+    return KnowledgeBase(
+        knowledge_base_id=orm.knowledge_base_id,
+        name=orm.name,
+        description=orm.description,
+        status=KnowledgeBaseStatus(orm.status),
+        metadata_json=dict(orm.metadata_json or {}),
+        created_at=orm.created_at,
+        updated_at=orm.updated_at,
+    )
+
+
+def chunk_embedding_to_orm(emb: Any) -> Any:
+    """Converts a domain ChunkEmbedding into a ChunkEmbeddingORM record."""
+    from app.persistence.models import ChunkEmbeddingORM
+
+    return ChunkEmbeddingORM(
+        embedding_id=emb.embedding_id,
+        chunk_id=emb.chunk_id,
+        provider=emb.provider,
+        model=emb.model,
+        dimension=emb.dimension,
+        embedding_vector=list(emb.vector),
+        text_hash=emb.text_hash,
+        retrieval_policy_version=emb.retrieval_policy_version,
+        created_at=emb.created_at,
+    )
+
+
+def chunk_embedding_from_orm(orm: Any) -> Any:
+    """Reconstructs a domain ChunkEmbedding from a ChunkEmbeddingORM record."""
+    from app.domain.knowledge_base import ChunkEmbedding
+
+    return ChunkEmbedding(
+        embedding_id=orm.embedding_id,
+        chunk_id=orm.chunk_id,
+        provider=orm.provider,
+        model=orm.model,
+        dimension=orm.dimension,
+        vector=tuple(float(v) for v in (orm.embedding_vector or [])),
+        text_hash=orm.text_hash,
+        retrieval_policy_version=orm.retrieval_policy_version,
         created_at=orm.created_at,
     )
 

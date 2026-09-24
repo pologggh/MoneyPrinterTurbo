@@ -2,7 +2,7 @@
 Comprehensive test suite for Stage P1: Production Plan + Asset Stage Integration.
 
 Verifies:
-- Production stage registry registers PRODUCTION_PLAN and ASSET; AUDIO remains unsupported.
+- The completed production registry registers PRODUCTION_PLAN through DELIVERY.
 - ProductionPlanStageExecutor consumes approved StoryboardSnapshot, invokes AssetRoutePlanningService,
   and creates TaskArtifactRef(ASSET_ROUTE_PLAN) without calling external providers.
 - Unapproved (DRAFT) StoryboardSnapshot is rejected.
@@ -506,12 +506,13 @@ def test_production_registry_contains_production_plan_and_asset():
     assert isinstance(registry.get_executor(Stage.ASSET), AssetStageExecutor)
 
 
-def test_production_registry_leaves_subsequent_stages_unsupported():
-    """Verify DELIVERY remains unsupported in default registry."""
+def test_production_registry_includes_delivery():
+    """Verify the completed production registry includes DELIVERY."""
     registry = get_default_executor_registry()
     assert registry.has_executor(Stage.COMPOSITION)
     assert registry.has_executor(Stage.QUALITY_REVIEW)
-    assert not registry.has_executor(Stage.DELIVERY)
+    assert registry.has_executor(Stage.DELIVERY)
+    assert registry.get_executor(Stage.DELIVERY) is not None
 
 
 # =============================================================================

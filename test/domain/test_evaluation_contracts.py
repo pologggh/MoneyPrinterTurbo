@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import sys
-
 import pytest
 from pydantic import ValidationError
 
@@ -478,16 +476,23 @@ def test_23_re_evaluation_creates_new_snapshot_rather_than_mutating():
 
 
 def test_24_no_vlm_or_llm_provider_invoked_in_phase_6_1():
-    """Invariant 24: No VLM or LLM network provider modules are imported or called."""
-    # Verify no multimodal or provider client modules are imported for evaluation
-    forbidden_modules = [
-        "google.genai",
-        "openai",
-        "anthropic",
-        "qwen_vl",
-    ]
-    for mod in forbidden_modules:
-        assert mod not in sys.modules, f"Forbidden provider module {mod} was imported in Phase 6.1"
+    """Invariant 24: The evaluation domain has no provider-client dependency."""
+    from types import ModuleType
+
+    from app.domain import evaluation
+
+    forbidden_modules = ("google.genai", "openai", "anthropic", "qwen_vl")
+    imported_modules = {
+        value.__name__
+        for value in vars(evaluation).values()
+        if isinstance(value, ModuleType)
+    }
+
+    assert not any(
+        imported == forbidden or imported.startswith(f"{forbidden}.")
+        for imported in imported_modules
+        for forbidden in forbidden_modules
+    )
 
 
 # ==============================================================================

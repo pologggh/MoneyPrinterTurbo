@@ -46,3 +46,14 @@ htmlcov/
 
 # Claude Code 订阅令牌（docker compose 自动读取），禁止提交
 .env
+
+# Runtime logs / 本地运行日志
+/.runtime-*.log
+*.runtime-*.log
+
+# Pytest and test temporary directories / 测试临时目录与产物
+/.pytest_tmp/
+/.test-tmp-*/
+.test-tmp-*/
+.pytest_cache/
+.ruff_cache/

@@ -21,7 +21,8 @@ from app.domain.asset_router import (
     TierLevel,
 )
 from app.domain.enums import VisualType
-from app.services import volcengine_seedance
+from app.services import aliyun_wan, volcengine_seedance
+from app.services.material import is_openai_image_enabled
 
 
 @runtime_checkable
@@ -65,6 +66,37 @@ class VolcEngineSeedanceAdapter:
                 metadata=StaticCapabilityMetadata(
                     quality_tier=TierLevel.HIGH,
                     cost_tier=TierLevel.HIGH,
+                    latency_tier=TierLevel.HIGH,
+                ),
+            ),
+        )
+
+
+class AliyunWanCapabilityAdapter:
+    """Adapts Alibaba Cloud Model Studio Wan text-to-video capabilities."""
+
+    def get_capabilities(self) -> tuple[AssetCapability, ...]:
+        model_id = str(
+            config.app.get("aliyun_wan_model", aliyun_wan.DEFAULT_MODEL)
+            or aliyun_wan.DEFAULT_MODEL
+        ).strip()
+        return (
+            AssetCapability(
+                capability_id=f"aliyun_wan:{model_id}:TEXT_TO_VIDEO",
+                provider="aliyun_wan",
+                model=model_id,
+                generation_mode=GenerationMode.TEXT_TO_VIDEO,
+                supported_visual_types=(VisualType.AI_VIDEO,),
+                supported_aspect_ratios=("16:9", "9:16", "1:1", "4:3", "3:4"),
+                min_duration=2.0,
+                max_duration=15.0,
+                supports_prompt=True,
+                supports_source_asset=False,
+                supports_user_asset=False,
+                enabled=aliyun_wan.is_enabled(),
+                metadata=StaticCapabilityMetadata(
+                    quality_tier=TierLevel.HIGH,
+                    cost_tier=TierLevel.MEDIUM,
                     latency_tier=TierLevel.HIGH,
                 ),
             ),
@@ -201,11 +233,7 @@ class OpenAIImageAdapter:
 
     def get_capabilities(self) -> tuple[AssetCapability, ...]:
         model = str(config.app.get("openai_image_model", "dall-e-3") or "dall-e-3").strip()
-        enabled = bool(
-            config.app.get("openai_image_api_key")
-            or config.app.get("openai_api_key")
-            or config.app.get("openai_image_base_url")
-        )
+        enabled = is_openai_image_enabled()
         return (
             AssetCapability(
                 capability_id=f"openai:{model}:TEXT_TO_IMAGE",
@@ -285,8 +313,7 @@ class UserAssetAdapter:
 
 class DiagramPlaceholderAdapter:
     """
-    Conceptual capability for diagram rendering (Mermaid, Manim, SVG).
-    Currently marked disabled as no diagram execution engine is present.
+    Local deterministic capability for rendering knowledge diagram cards.
     """
 
     def get_capabilities(self) -> tuple[AssetCapability, ...]:
@@ -294,16 +321,16 @@ class DiagramPlaceholderAdapter:
             AssetCapability(
                 capability_id="system:diagram_renderer:DIAGRAM_RENDER",
                 provider="system_diagram",
-                model="diagram_placeholder",
+                model="diagram_card_v1",
                 generation_mode=GenerationMode.DIAGRAM_RENDER,
                 supported_visual_types=(VisualType.DIAGRAM,),
-                supported_aspect_ratios=(),
+                supported_aspect_ratios=("16:9", "9:16", "1:1"),
                 min_duration=None,
                 max_duration=None,
                 supports_prompt=True,
                 supports_source_asset=False,
                 supports_user_asset=False,
-                enabled=False,  # No execution engine in MPT yet
+                enabled=True,
                 metadata=StaticCapabilityMetadata(
                     quality_tier=TierLevel.MEDIUM,
                     cost_tier=TierLevel.LOW,
@@ -311,6 +338,48 @@ class DiagramPlaceholderAdapter:
                 ),
             ),
         )
+
+
+class KnowledgeCardFallbackAdapter:
+    """
+    Local deterministic fallback capability for rendering knowledge cards
+    when no real AI image generation provider is enabled.
+    """
+
+    def __init__(self, *, enabled: bool | None = None) -> None:
+        self._explicit_enabled = enabled
+
+    def _is_real_image_provider_enabled(self) -> bool:
+        return is_openai_image_enabled()
+
+    def get_capabilities(self) -> tuple[AssetCapability, ...]:
+        if self._explicit_enabled is not None:
+            enabled = self._explicit_enabled
+        else:
+            enabled = not self._is_real_image_provider_enabled()
+
+        return (
+            AssetCapability(
+                capability_id="system:knowledge_card:TEXT_TO_IMAGE",
+                provider="system_knowledge_card",
+                model="knowledge_card_v1",
+                generation_mode=GenerationMode.TEXT_TO_IMAGE,
+                supported_visual_types=(VisualType.AI_IMAGE,),
+                supported_aspect_ratios=("16:9", "9:16", "1:1"),
+                min_duration=None,
+                max_duration=None,
+                supports_prompt=True,
+                supports_source_asset=False,
+                supports_user_asset=False,
+                enabled=enabled,
+                metadata=StaticCapabilityMetadata(
+                    quality_tier=TierLevel.MEDIUM,
+                    cost_tier=TierLevel.LOW,
+                    latency_tier=TierLevel.LOW,
+                ),
+            ),
+        )
+
 
 
 def evaluate_candidate(
@@ -465,12 +534,14 @@ def get_default_capability_registry() -> AssetCapabilityRegistry:
     """
     return AssetCapabilityRegistry(
         providers=[
+            AliyunWanCapabilityAdapter(),
             VolcEngineSeedanceAdapter(),
             WaveSpeedAdapter(),
             PexelsStockAdapter(),
             PixabayStockAdapter(),
             CoverrStockAdapter(),
             OpenAIImageAdapter(),
+            KnowledgeCardFallbackAdapter(),
             SourceAssetAdapter(),
             UserAssetAdapter(),
             DiagramPlaceholderAdapter(),

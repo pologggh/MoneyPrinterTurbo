@@ -2,6 +2,7 @@ from unittest.mock import patch
 
 import pytest
 
+from app.config import config
 from app.domain.asset_router import (
     AssetCapability,
     AssetRouteDecision,
@@ -19,7 +20,6 @@ from app.domain.shot import Shot, ShotRevision
 from app.services.asset_capability_registry import (
     AssetCapabilityProvider,
     AssetCapabilityRegistry,
-    DiagramPlaceholderAdapter,
     SourceAssetAdapter,
     UserAssetAdapter,
     evaluate_candidate,
@@ -390,10 +390,22 @@ def test_zero_provider_execution_during_discovery():
 
 # 12. ROUTE_UNAVAILABLE can carry structured reason codes.
 def test_route_unavailable_carries_structured_reason_codes():
+    class DisabledDiagramProvider(AssetCapabilityProvider):
+        def get_capabilities(self) -> tuple[AssetCapability, ...]:
+            return (
+                AssetCapability(
+                    capability_id="disabled:diagram:DIAGRAM_RENDER",
+                    provider="disabled_diagram",
+                    model="disabled",
+                    generation_mode=GenerationMode.DIAGRAM_RENDER,
+                    supported_visual_types=(VisualType.DIAGRAM,),
+                    enabled=False,
+                ),
+            )
+
     registry = AssetCapabilityRegistry(
         providers=[
-            # Diagram renderer is disabled
-            DiagramPlaceholderAdapter(),
+            DisabledDiagramProvider(),
         ]
     )
 
@@ -421,3 +433,221 @@ def test_route_unavailable_carries_structured_reason_codes():
     err = exc_info.value
     assert RouteUnavailableReason.NO_ENABLED_PROVIDER in err.reasons
     assert "ROUTE_UNAVAILABLE" in str(err)
+
+
+def test_default_diagram_capability_is_enabled_and_routable():
+    registry = get_default_capability_registry()
+    request = AssetRoutingRequest(
+        shot_id="shot-diagram",
+        shot_revision_id="shot-rev-diagram",
+        requested_visual_type=VisualType.DIAGRAM,
+        target_duration=4.0,
+        visual_goal="Explain how Ollama connects to Dify",
+        scene_description="Ollama connects to Dify, then builds a local knowledge base",
+        generation_prompt="Ollama -> Dify -> local knowledge base",
+        camera_movement="static",
+        aspect_ratio="16:9",
+    )
+
+    decision = registry.create_route_decision(request)
+
+    assert len(decision.eligible_candidates) == 1
+    candidate = decision.eligible_candidates[0]
+    assert candidate.provider == "system_diagram"
+    assert candidate.generation_mode == GenerationMode.DIAGRAM_RENDER
+
+
+# 14. AI_IMAGE fallback: when no real image provider is enabled, system_knowledge_card is eligible
+def test_ai_image_knowledge_card_fallback_when_no_real_provider():
+    with patch.dict(
+        config.app,
+        {
+            "openai_image_api_key": None,
+            "openai_api_key": "",
+            "openai_image_base_url": "",
+        },
+    ):
+        registry = get_default_capability_registry()
+        request = AssetRoutingRequest(
+            shot_id="shot-ai-image-fallback",
+            shot_revision_id="rev-ai-image-fallback",
+            requested_visual_type=VisualType.AI_IMAGE,
+            target_duration=4.0,
+            visual_goal="Explain Transformer self-attention mechanism",
+            scene_description="Transformer self-attention calculation flow",
+            generation_prompt="Attention(Q, K, V) softmax formula breakdown",
+            camera_movement="static",
+            aspect_ratio="16:9",
+        )
+
+        candidates = registry.find_candidates(request)
+        kc_candidates = [
+            c for c in candidates if c.provider == "system_knowledge_card"
+        ]
+        assert len(kc_candidates) == 1
+        kc = kc_candidates[0]
+        assert kc.is_eligible is True
+        assert kc.model == "knowledge_card_v1"
+        assert kc.generation_mode == GenerationMode.TEXT_TO_IMAGE
+        assert kc.requested_visual_type == VisualType.AI_IMAGE
+
+        # Real provider (openai) must be ineligible due to NO_ENABLED_PROVIDER
+        openai_candidates = [c for c in candidates if c.provider == "openai"]
+        assert len(openai_candidates) == 1
+        assert openai_candidates[0].is_eligible is False
+        assert (
+            RouteUnavailableReason.NO_ENABLED_PROVIDER
+            in openai_candidates[0].rejection_reasons
+        )
+
+        decision = registry.create_route_decision(request)
+        assert len(decision.eligible_candidates) >= 1
+        assert any(
+            c.provider == "system_knowledge_card" for c in decision.eligible_candidates
+        )
+
+
+# 15. Real image provider priority: when real provider is configured, knowledge card fallback is disabled
+def test_ai_image_real_provider_prioritized_over_knowledge_card_fallback():
+    with patch.dict(
+        config.app,
+        {
+            "openai_image_base_url": "https://api.openai.com/v1",
+            "openai_image_model": "dall-e-3",
+            "openai_image_api_keys": ["sk-mock-real-image-key"],
+            "openai_api_key": "",
+        },
+    ):
+        registry = get_default_capability_registry()
+        request = AssetRoutingRequest(
+            shot_id="shot-ai-image-real",
+            shot_revision_id="rev-ai-image-real",
+            requested_visual_type=VisualType.AI_IMAGE,
+            target_duration=4.0,
+            visual_goal="Photorealistic neural network core",
+            scene_description="Glowing optical computing chip",
+            generation_prompt="hyperrealistic optical neural core",
+            camera_movement="static",
+            aspect_ratio="16:9",
+        )
+
+        candidates = registry.find_candidates(request)
+        openai_cands = [c for c in candidates if c.provider == "openai"]
+        assert len(openai_cands) == 1
+        assert openai_cands[0].is_eligible is True
+
+        kc_cands = [
+            c for c in candidates if c.provider == "system_knowledge_card"
+        ]
+        assert len(kc_cands) == 1
+        # Fallback must be disabled or ineligible when real provider is enabled
+        assert kc_cands[0].is_eligible is False
+        assert (
+            RouteUnavailableReason.NO_ENABLED_PROVIDER in kc_cands[0].rejection_reasons
+        )
+
+        decision = registry.create_route_decision(request)
+        assert len(decision.eligible_candidates) == 1
+        assert decision.eligible_candidates[0].provider == "openai"
+
+
+# 16. Knowledge card fallback respects aspect ratios (16:9, 9:16, 1:1) and rejects unsupported ones
+def test_knowledge_card_fallback_aspect_ratio_constraints():
+    with patch.dict(
+        config.app,
+        {
+            "openai_image_api_key": None,
+            "openai_api_key": "",
+            "openai_image_base_url": "",
+        },
+    ):
+        registry = get_default_capability_registry()
+        for ar in ("16:9", "9:16", "1:1"):
+            req = AssetRoutingRequest(
+                shot_id=f"shot-{ar}",
+                shot_revision_id=f"rev-{ar}",
+                requested_visual_type=VisualType.AI_IMAGE,
+                target_duration=4.0,
+                visual_goal="Knowledge concept",
+                scene_description="Concept details",
+                generation_prompt="Concept diagram",
+                camera_movement="static",
+                aspect_ratio=ar,
+            )
+            cands = [
+                c
+                for c in registry.find_candidates(req)
+                if c.provider == "system_knowledge_card"
+            ]
+            assert len(cands) == 1
+            assert cands[0].is_eligible is True
+
+        # Unsupported aspect ratio like 4:3
+        req_unsupported = AssetRoutingRequest(
+            shot_id="shot-unsupported",
+            shot_revision_id="rev-unsupported",
+            requested_visual_type=VisualType.AI_IMAGE,
+            target_duration=4.0,
+            visual_goal="Knowledge concept",
+            scene_description="Concept details",
+            generation_prompt="Concept diagram",
+            camera_movement="static",
+            aspect_ratio="4:3",
+        )
+        cands_unsupported = [
+            c
+            for c in registry.find_candidates(req_unsupported)
+            if c.provider == "system_knowledge_card"
+        ]
+        assert len(cands_unsupported) == 1
+        assert cands_unsupported[0].is_eligible is False
+        assert (
+            RouteUnavailableReason.UNSUPPORTED_ASPECT_RATIO
+            in cands_unsupported[0].rejection_reasons
+        )
+
+
+# 17. OpenAI text LLM key (openai_api_key) must NOT enable OpenAIImageAdapter or disable knowledge card fallback
+def test_openai_text_llm_key_does_not_enable_image_provider_and_knowledge_card_falls_back():
+    with patch.dict(
+        config.app,
+        {
+            "openai_api_key": "sk-mock-text-llm-key",
+            "openai_image_api_key": "",
+            "openai_image_api_keys": [],
+            "openai_image_base_url": "",
+            "openai_image_model": "",
+        },
+    ):
+        registry = get_default_capability_registry()
+        request = AssetRoutingRequest(
+            shot_id="shot-ai-image-text-key",
+            shot_revision_id="rev-ai-image-text-key",
+            requested_visual_type=VisualType.AI_IMAGE,
+            target_duration=4.0,
+            visual_goal="Explain LLM attention map",
+            scene_description="LLM attention heatmap visualization",
+            generation_prompt="attention map heatmap breakdown",
+            camera_movement="static",
+            aspect_ratio="16:9",
+        )
+
+        candidates = registry.find_candidates(request)
+        openai_cands = [c for c in candidates if c.provider == "openai"]
+        assert len(openai_cands) == 1
+        # OpenAI image provider must NOT be enabled just because text LLM key is set!
+        assert openai_cands[0].is_eligible is False
+        assert (
+            RouteUnavailableReason.NO_ENABLED_PROVIDER in openai_cands[0].rejection_reasons
+        )
+
+        kc_cands = [
+            c for c in candidates if c.provider == "system_knowledge_card"
+        ]
+        assert len(kc_cands) == 1
+        # Knowledge card fallback MUST remain eligible!
+        assert kc_cands[0].is_eligible is True
+
+        decision = registry.create_route_decision(request)
+        assert len(decision.eligible_candidates) == 1
+        assert decision.eligible_candidates[0].provider == "system_knowledge_card"

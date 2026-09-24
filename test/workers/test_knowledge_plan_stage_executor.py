@@ -228,11 +228,11 @@ def test_production_registry_contains_no_fake_executors(session_factory):
         assert not executor.__class__.__name__.startswith(("Mock", "Fake", "Dummy"))
 
 
-def test_delivery_remains_unsupported(session_factory):
+def test_delivery_is_registered(session_factory):
     registry = get_default_executor_registry(session_factory=session_factory)
-    assert not registry.has_executor(Stage.DELIVERY)
-    assert registry.get_executor(Stage.DELIVERY) is None
-    assert Stage.DELIVERY not in registry.list_supported_stages()
+    assert registry.has_executor(Stage.DELIVERY)
+    assert registry.get_executor(Stage.DELIVERY) is not None
+    assert Stage.DELIVERY in registry.list_supported_stages()
     assert registry.has_executor(Stage.QUALITY_REVIEW)
 
 
@@ -711,6 +711,31 @@ def test_temporary_malformed_llm_output_is_retryable(session_factory):
     assert result.success is False
     assert result.error_type == JobErrorType.RETRYABLE.value
     assert result.is_retryable is True
+
+
+def test_provider_failure_keeps_real_error_and_is_retryable(session_factory):
+    task, job, snapshot, item, source, art_ref = _setup_task_with_evidence(session_factory)
+    call_count = 0
+
+    def unavailable_llm(prompt: str) -> str:
+        nonlocal call_count
+        call_count += 1
+        return "Error: Connection error."
+
+    executor = KnowledgePlanStageExecutor(
+        session_factory=session_factory,
+        llm_caller=unavailable_llm,
+        max_retries=2,
+    )
+
+    result = executor.execute(task, job)
+
+    assert result.success is False
+    assert result.error_type == JobErrorType.RETRYABLE.value
+    assert result.error_message == "LLM provider request failed: Connection error."
+    assert result.is_retryable is True
+    assert result.metadata_json == {"reason": "PlannerProviderError"}
+    assert call_count == 1
 
 
 # =============================================================================

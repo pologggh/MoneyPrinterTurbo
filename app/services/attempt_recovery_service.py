@@ -47,14 +47,15 @@ class AttemptRecoveryService:
             rec_dec = RecoveryDecision(
                 execution_attempt_id=attempt.execution_attempt_id,
                 action=RecoveryAction.RESOLVED_FAILED,
-                error_code="ADAPTER_NOT_FOUND",
-                error_message=err_msg,
+                evidence={"error_code": "ADAPTER_NOT_FOUND", "error_message": err_msg},
+                resolved_state=ExecutionAttemptStatus.FAILED,
+                reason_code="ADAPTER_NOT_FOUND",
             )
             failed_attempt = attempt.mark_failed(
                 error_code="ADAPTER_NOT_FOUND",
                 error_message=err_msg,
             )
-            failed_exec = shot_execution.record_failure(
+            failed_exec = shot_execution.mark_failed(
                 error_code="ADAPTER_NOT_FOUND",
                 error_message=err_msg,
             )
@@ -220,46 +221,73 @@ class AttemptRecoveryService:
         target_dir.mkdir(parents=True, exist_ok=True)
 
         for se in shot_execs:
-            if se.status in (
+            needs_recovery = se.status in (
                 ShotExecutionStatus.NEEDS_RECOVERY,
                 ShotExecutionStatus.SUBMISSION_OUTCOME_UNKNOWN,
-            ):
-                if not se.attempt_ids:
-                    continue
+            )
+            abandoned_remote_attempt = False
+            if not needs_recovery and se.attempt_ids:
                 latest_attempt_id = se.attempt_ids[-1]
-                attempt = repo.get_execution_attempt(latest_attempt_id)
-                attempt_req = repo.get_attempt_request(latest_attempt_id)
-                receipt = repo.get_provider_receipt(latest_attempt_id)
-
-                if attempt is None or attempt_req is None:
-                    continue
-
-                decision, updated_exec, updated_attempt, new_asset = self.recover(
-                    shot_execution=se,
-                    attempt=attempt,
-                    attempt_request=attempt_req,
-                    receipt=receipt,
-                    target_dir=target_dir,
+                latest_att = repo.get_execution_attempt(latest_attempt_id)
+                latest_receipt = repo.get_provider_receipt(latest_attempt_id)
+                is_unfinished_submission = bool(
+                    latest_att
+                    and latest_att.status == ExecutionAttemptStatus.SUBMITTING
                 )
+                is_accepted_remote_job = bool(
+                    latest_att
+                    and latest_receipt is not None
+                    and latest_att.status
+                    in (
+                        ExecutionAttemptStatus.ACCEPTED,
+                        ExecutionAttemptStatus.RUNNING,
+                    )
+                )
+                if is_unfinished_submission or is_accepted_remote_job:
+                    abandoned_remote_attempt = True
+                    # A restarted run must recover the existing remote job rather
+                    # than submit another paid request.
+                    se = se.model_copy(update={"status": ShotExecutionStatus.NEEDS_RECOVERY})
 
-                repo.update_execution_attempt(updated_attempt)
-                repo.update_shot_execution(updated_exec)
-                if new_asset is not None:
-                    repo.add_shot_asset_version(new_asset)
+            if not needs_recovery and not abandoned_remote_attempt:
+                continue
 
-                recovery_results.append({
-                    "shot_id": se.shot_id,
-                    "attempt_id": latest_attempt_id,
-                    "action": decision.action.value,
-                    "reason_code": decision.reason_code,
-                    "status": updated_attempt.status.value,
-                })
+            if not se.attempt_ids:
+                continue
+            latest_attempt_id = se.attempt_ids[-1]
+            attempt = repo.get_execution_attempt(latest_attempt_id)
+            attempt_req = repo.get_attempt_request(latest_attempt_id)
+            receipt = repo.get_provider_receipt(latest_attempt_id)
 
-                if decision.action in (
-                    RecoveryAction.RESOLVED_SUCCEEDED,
-                    RecoveryAction.RESOLVED_FAILED,
-                ):
-                    resolved_count += 1
+            if attempt is None or attempt_req is None:
+                continue
+
+            decision, updated_exec, updated_attempt, new_asset = self.recover(
+                shot_execution=se,
+                attempt=attempt,
+                attempt_request=attempt_req,
+                receipt=receipt,
+                target_dir=target_dir,
+            )
+
+            repo.update_execution_attempt(updated_attempt)
+            repo.update_shot_execution(updated_exec)
+            if new_asset is not None:
+                repo.add_shot_asset_version(new_asset)
+
+            recovery_results.append({
+                "shot_id": se.shot_id,
+                "attempt_id": latest_attempt_id,
+                "action": decision.action.value,
+                "reason_code": decision.reason_code,
+                "status": updated_attempt.status.value,
+            })
+
+            if decision.action in (
+                RecoveryAction.RESOLVED_SUCCEEDED,
+                RecoveryAction.RESOLVED_FAILED,
+            ):
+                resolved_count += 1
 
         # Re-evaluate ExecutionRun status
         refreshed_execs = repo.list_shot_executions_for_run(run_id)

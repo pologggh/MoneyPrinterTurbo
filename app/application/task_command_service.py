@@ -1,11 +1,15 @@
-from __future__ import annotations
-
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.application.knowledge_base_service import (
+    KnowledgeBaseNotFoundError,
+    KnowledgeBaseServiceError,
+)
 from app.application.knowledge_video_workflow import KnowledgeVideoWorkflow
+from app.domain.knowledge_base import KnowledgeBaseStatus
 from app.domain.knowledge_video_task import KnowledgeVideoTask
 from app.domain.workflow_job import WorkflowJob
 from app.domain.workflow_state import (
@@ -17,6 +21,7 @@ from app.domain.workflow_state import (
     WorkflowPolicyType,
 )
 from app.persistence.repositories import (
+    KnowledgeBaseRepository,
     KnowledgeVideoTaskRepository,
     StageExecutionRepository,
     WorkflowJobRepository,
@@ -34,6 +39,7 @@ class TaskCommandService:
         self.task_repo = KnowledgeVideoTaskRepository(session)
         self.job_repo = WorkflowJobRepository(session)
         self.exec_repo = StageExecutionRepository(session)
+        self.kb_repo = KnowledgeBaseRepository(session)
         self.workflow = KnowledgeVideoWorkflow(session)
 
     def create_task(
@@ -45,16 +51,84 @@ class TaskCommandService:
         workflow_policy: WorkflowPolicyType = WorkflowPolicyType.AUTO,
         task_metadata: dict[str, Any] | None = None,
         allow_research: bool = False,
+        knowledge_base_ids: Sequence[str] | None = None,
+        initial_evidence: Sequence[Any] | None = None,
         task_id: str | None = None,
         now: datetime | None = None,
     ) -> KnowledgeVideoTask:
         """
-        Atomically creates a new KnowledgeVideoTask and enqueues its initial EVIDENCE job.
+        Atomically creates a new KnowledgeVideoTask, attaches any initial knowledge bases
+        and initial evidence sources (TEXT/URL), and enqueues its initial EVIDENCE job.
         Returns the created domain task.
         """
+        from app.application.evidence_service import TaskEvidenceCommandService
+
         ts = now or datetime.now(UTC)
 
-        # 1. Create and persist the Task aggregate root
+        # 1. Validate knowledge bases before modifying state
+        kb_ids_to_attach: list[str] = []
+        if knowledge_base_ids:
+            for kb_id in knowledge_base_ids:
+                clean_id = kb_id.strip() if isinstance(kb_id, str) else str(kb_id)
+                if not clean_id:
+                    continue
+                kb = self.kb_repo.get_knowledge_base(clean_id)
+                if kb is None:
+                    raise KnowledgeBaseNotFoundError(f"Knowledge Base '{clean_id}' not found.")
+                if kb.status != KnowledgeBaseStatus.ACTIVE:
+                    raise KnowledgeBaseServiceError(
+                        f"Cannot attach archived Knowledge Base '{clean_id}' (status: {kb.status.value})."
+                    )
+                if clean_id not in kb_ids_to_attach:
+                    kb_ids_to_attach.append(clean_id)
+
+        # 2. Validate initial evidence before modifying state
+        validated_evidence: list[dict[str, Any]] = []
+        if initial_evidence:
+            for idx, item in enumerate(initial_evidence):
+                if isinstance(item, dict):
+                    st = item.get("source_type")
+                    tc = item.get("text_content")
+                    u = item.get("url")
+                    tit = item.get("title")
+                    auth = item.get("author")
+                    meta = item.get("metadata") or {}
+                else:
+                    st = getattr(item, "source_type", None)
+                    tc = getattr(item, "text_content", None)
+                    u = getattr(item, "url", None)
+                    tit = getattr(item, "title", None)
+                    auth = getattr(item, "author", None)
+                    meta = getattr(item, "metadata", None) or {}
+
+                st_val = st.value if hasattr(st, "value") else str(st or "").upper()
+                if st_val == "TEXT":
+                    if not tc or not str(tc).strip():
+                        raise ValueError(f"Initial evidence #{idx + 1} (TEXT) must have non-empty text_content.")
+                    validated_evidence.append({
+                        "source_type": "TEXT",
+                        "text_content": str(tc).strip(),
+                        "title": tit,
+                        "author": auth,
+                        "metadata": meta,
+                    })
+                elif st_val == "URL":
+                    if not u or not str(u).strip():
+                        raise ValueError(f"Initial evidence #{idx + 1} (URL) must have non-empty url.")
+                    clean_u = str(u).strip()
+                    if not (clean_u.startswith("http://") or clean_u.startswith("https://")):
+                        raise ValueError(f"Initial evidence #{idx + 1} (URL) must start with http:// or https://: {clean_u}")
+                    validated_evidence.append({
+                        "source_type": "URL",
+                        "url": clean_u,
+                        "title": tit,
+                        "author": auth,
+                        "metadata": meta,
+                    })
+                else:
+                    raise ValueError(f"Unsupported initial evidence source type: '{st_val}'. Only TEXT and URL are supported.")
+
+        # 3. Create and persist the Task aggregate root
         task = KnowledgeVideoTask.create(
             topic=topic,
             target_duration=target_duration,
@@ -68,7 +142,34 @@ class TaskCommandService:
         )
         persisted_task = self.task_repo.save_task(task)
 
-        # 2. Create and persist the initial EVIDENCE job
+        # 4. Attach knowledge bases
+        for kb_id in kb_ids_to_attach:
+            self.kb_repo.attach_to_task(persisted_task.task_id, kb_id)
+
+        # 5. Attach initial evidence sources
+        if validated_evidence:
+            evidence_cmd = TaskEvidenceCommandService(self._session)
+            for ev in validated_evidence:
+                if ev["source_type"] == "TEXT":
+                    evidence_cmd.add_text_source(
+                        task_id=persisted_task.task_id,
+                        text=ev["text_content"],
+                        title=ev["title"],
+                        author=ev["author"],
+                        metadata=ev["metadata"],
+                        now=ts,
+                    )
+                elif ev["source_type"] == "URL":
+                    evidence_cmd.register_url_source(
+                        task_id=persisted_task.task_id,
+                        url=ev["url"],
+                        title=ev["title"],
+                        author=ev["author"],
+                        metadata=ev["metadata"],
+                        now=ts,
+                    )
+
+        # 6. Create and persist the initial EVIDENCE job
         idempotency_key = f"idemp_{persisted_task.task_id}_evidence_1"
         initial_job = WorkflowJob.create(
             task_id=persisted_task.task_id,
@@ -78,6 +179,7 @@ class TaskCommandService:
             now=ts,
         )
         self.job_repo.create_job(initial_job)
+        self._session.flush()
 
         return persisted_task
 

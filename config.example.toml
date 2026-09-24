@@ -122,6 +122,19 @@ volcengine_seedance_poll_interval = 5
 volcengine_seedance_run_timeout = 1800
 volcengine_seedance_watermark = false
 
+# Alibaba Cloud Model Studio Wan uses the official asynchronous text-to-video API.
+# Phase 1 supports wan2.7-t2v only. Both the API key and workspace ID are required;
+# generation is billed by Alibaba Cloud for every accepted clip task.
+aliyun_wan_api_key = ""
+aliyun_wan_workspace_id = ""
+aliyun_wan_region = "cn-beijing" # or "ap-southeast-1"
+aliyun_wan_model = "wan2.7-t2v"
+aliyun_wan_resolution = "720P"
+aliyun_wan_prompt_extend = true
+aliyun_wan_watermark = false
+aliyun_wan_poll_interval = 5
+aliyun_wan_run_timeout = 1800
+
 # OFox (https://ofox.ai) exposes multiple text-to-video models (Seedance, Wan,
 # and more) behind one API key using an asynchronous /v1/videos API.
 # Create an API key at https://ofox.ai
@@ -568,6 +581,22 @@ voices = []
 # is subject to Fair Use Policy, rate limits, and time-limited promotional
 # windows (e.g. through August 2026).  There is no SLA.  Please check
 # https://fish.audio/pricing for current availability and commercial terms.
+
+# =============================================================================
+# Text Embedding / 文本向量嵌入设置
+# =============================================================================
+
+[embedding]
+# Enable vector embeddings for Hybrid RAG. If false or api_key is empty,
+# the system gracefully and honestly degrades to BM25-only lexical retrieval.
+enabled = false
+provider = "openai" # "openai" or "fake" (for offline dev/tests)
+base_url = "https://api.openai.com/v1"
+api_key = ""
+model = "text-embedding-3-small"
+dimension = 1536
+timeout = 30
+batch_size = 32
 
 # =============================================================================
 # WebUI Preferences / WebUI 偏好

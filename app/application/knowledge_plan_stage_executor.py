@@ -23,6 +23,7 @@ from app.domain.planner import (
     PlannerInput,
     PlannerOutputInvalidError,
     PlannerOutputSchemaError,
+    PlannerProviderError,
 )
 from app.domain.task_artifact import ArtifactType, TaskArtifactRef
 from app.domain.trace import TraceEventType
@@ -295,6 +296,7 @@ class KnowledgePlanStageExecutor:
                 )
             except (
                 PlannerOutputSchemaError,
+                PlannerProviderError,
                 InvalidDurationPlanError,
                 PlannerOutputInvalidError,
                 InvalidBeatLineageInheritanceError,

@@ -44,9 +44,13 @@ class TestVideoControllerHelpers(unittest.TestCase):
 
     def test_fastapi_startup_recovers_interrupted_cross_posts(self):
         """API 进程启动时必须执行一次发布遗留状态恢复。"""
+        from app.persistence import database_lifecycle
         from app.services import task as task_service
 
-        with patch.object(task_service, "recover_interrupted_cross_posts") as recover:
+        with (
+            patch.object(database_lifecycle, "init_database_on_startup", return_value=True),
+            patch.object(task_service, "recover_interrupted_cross_posts") as recover,
+        ):
 
             async def run_lifespan():
                 async with asgi.application_lifespan(asgi.app):

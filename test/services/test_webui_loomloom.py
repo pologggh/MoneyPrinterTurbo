@@ -15,6 +15,12 @@ ROOT_DIR = Path(__file__).parent.parent.parent
 WEBUI_MAIN = ROOT_DIR / "webui" / "Main.py"
 
 
+def legacy_app_test(timeout=30):
+    app = AppTest.from_file(str(WEBUI_MAIN), default_timeout=timeout)
+    app.session_state["app_view_mode"] = "legacy_video_generation"
+    return app
+
+
 def _video_capability(default_model_id="model-a", models=None):
     return loomloom.LoomLoomVideoCapability(
         models=(
@@ -230,7 +236,7 @@ def test_loomloom_webui_quotes_then_requires_confirmation_before_execute():
             return_value=running,
         ),
     ):
-        app = AppTest.from_file(str(WEBUI_MAIN), default_timeout=30)
+        app = legacy_app_test()
         app.session_state["ui_language"] = "en"
         app.run()
 
@@ -292,7 +298,7 @@ def test_generated_long_script_autofills_video_count_once_and_shows_shortfall():
         patch.object(llm, "generate_script", return_value=long_script),
         patch.object(llm, "generate_terms", return_value=["robot city"]),
     ):
-        app = AppTest.from_file(str(WEBUI_MAIN), default_timeout=30)
+        app = legacy_app_test()
         app.session_state["ui_language"] = "en"
         app.run()
 
@@ -345,7 +351,11 @@ def test_loomloom_video_source_quotes_then_passes_secret_in_confirmed_request():
     with (
         patch.object(config, "app", test_config),
         # 显式从两段切到一段，不能依赖开发者 config.toml 中的历史值。
-        patch.object(config, "ui", dict(config.ui, loomloom_video_scene_count=2)),
+        patch.object(
+            config,
+            "ui",
+            dict(config.ui, loomloom_video_scene_count=2, voice_mode="tts"),
+        ),
         patch.object(config, "try_save_config", return_value=True),
         patch.object(
             loomloom.LoomLoomVideoBackend,
@@ -359,7 +369,7 @@ def test_loomloom_video_source_quotes_then_passes_secret_in_confirmed_request():
         ) as resolve_call,
         patch("app.services.webui_task.submit_generation") as submit_generation,
     ):
-        app = AppTest.from_file(str(WEBUI_MAIN), default_timeout=30)
+        app = legacy_app_test()
         app.session_state["ui_language"] = "en"
         app.run()
 
@@ -400,7 +410,7 @@ def test_loomloom_video_source_quotes_then_passes_secret_in_confirmed_request():
         _widget_by_key(app.checkbox, "loomloom_video_confirm_charge").check().run()
         _widget_by_key(app.button, "generate_video_button").click().run()
 
-        assert submit_generation.call_count == 1
+        assert submit_generation.call_count == 1, [item.value for item in app.error]
         submitted_params = submit_generation.call_args.kwargs["params"]
         video_request = submit_generation.call_args.kwargs["loomloom_video_request"]
         assert "session-user-token" not in submitted_params.model_dump_json()
@@ -433,7 +443,7 @@ def test_loomloom_refresh_keeps_unavailable_selection_until_user_changes_it():
             side_effect=[_video_capability(), refreshed_capability],
         ),
     ):
-        app = AppTest.from_file(str(WEBUI_MAIN), default_timeout=30)
+        app = legacy_app_test()
         app.session_state["ui_language"] = "en"
         app.run()
 
@@ -487,7 +497,7 @@ def test_loomloom_zero_video_quote_warns_about_actual_charges():
             return_value=quote_result,
         ),
     ):
-        app = AppTest.from_file(str(WEBUI_MAIN), default_timeout=30)
+        app = legacy_app_test()
         app.session_state["ui_language"] = "en"
         app.run()
 
@@ -524,7 +534,7 @@ def test_selected_shengsuanyun_provider_hides_duplicate_loomloom_key_input():
         patch.object(config, "app", test_config),
         patch.object(config, "try_save_config", return_value=True),
     ):
-        app = AppTest.from_file(str(WEBUI_MAIN), default_timeout=30)
+        app = legacy_app_test()
         app.session_state["ui_language"] = "zh"
         app.run()
 
@@ -571,7 +581,7 @@ def test_paused_script_run_keeps_remote_id_until_user_stops_tracking():
         patch.object(config, "app", test_config),
         patch.object(config, "try_save_config", return_value=True),
     ):
-        app = AppTest.from_file(str(WEBUI_MAIN), default_timeout=30)
+        app = legacy_app_test()
         app.session_state["ui_language"] = "en"
         app.session_state["loomloom_run_id"] = "paid-run-1"
         app.session_state["loomloom_run_error"] = "temporary network failure"

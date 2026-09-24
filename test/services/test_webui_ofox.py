@@ -28,10 +28,12 @@ def test_ofox_source_requires_confirmation_then_submits_without_secret_in_params
     )
     with (
         patch.object(config, "app", test_config),
+        patch.object(config, "ui", dict(config.ui, voice_mode="tts")),
         patch.object(config, "try_save_config", return_value=True),
         patch("app.services.webui_task.submit_generation") as submit_generation,
     ):
         app = AppTest.from_file(str(WEBUI_MAIN), default_timeout=60)
+        app.session_state["app_view_mode"] = "legacy_video_generation"
         app.session_state["ui_language"] = "en"
         app.run()
 
@@ -52,7 +54,7 @@ def test_ofox_source_requires_confirmation_then_submits_without_secret_in_params
         _widget_by_key(app.checkbox, "ofox_confirm_charge").check().run()
         _widget_by_key(app.button, "generate_video_button").click().run()
 
-        assert submit_generation.call_count == 1
+        assert submit_generation.call_count == 1, [item.value for item in app.error]
         submitted_params = submit_generation.call_args.kwargs["params"]
         assert submitted_params.video_source == "ofox"
         assert "ofox-secret" not in submitted_params.model_dump_json()

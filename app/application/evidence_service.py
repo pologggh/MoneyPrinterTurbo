@@ -19,6 +19,11 @@ from app.domain.evidence import (
     UnsupportedSourceTypeError,
     compute_sha256,
 )
+from app.application.knowledge_base_service import (
+    KnowledgeBaseNotFoundError,
+    KnowledgeBaseServiceError,
+)
+from app.domain.knowledge_base import KnowledgeBaseStatus
 from app.domain.knowledge_video_task import KnowledgeVideoTask
 from app.domain.task_artifact import TaskArtifactRef
 from app.domain.workflow_state import (
@@ -28,6 +33,7 @@ from app.domain.workflow_state import (
 )
 from app.persistence.repositories import (
     EvidenceRepository,
+    KnowledgeBaseRepository,
     KnowledgeVideoTaskRepository,
     TaskArtifactRepository,
 )
@@ -85,6 +91,7 @@ class TaskEvidenceCommandService:
         self.task_repo = KnowledgeVideoTaskRepository(session)
         self.evidence_repo = EvidenceRepository(session)
         self.artifact_repo = TaskArtifactRepository(session)
+        self.kb_repo = KnowledgeBaseRepository(session)
 
     def _assert_task_modifiable(self, task_id: str) -> KnowledgeVideoTask:
         task = self.task_repo.get_task(task_id)
@@ -194,12 +201,17 @@ class TaskEvidenceCommandService:
         task_id: str,
         kb_id: str,
         metadata: dict[str, Any] | None = None,
-    ) -> SourceDocument:
+    ) -> None:
         self._assert_task_modifiable(task_id)
-        raise UnsupportedSourceTypeError(
-            f"Knowledge Base source '{kb_id}' cannot be registered: "
-            f"Knowledge Base subsystem is not yet implemented in Stage E1."
-        )
+        kb = self.kb_repo.get_knowledge_base(kb_id)
+        if kb is None:
+            raise KnowledgeBaseNotFoundError(f"Knowledge Base '{kb_id}' not found.")
+        if kb.status != KnowledgeBaseStatus.ACTIVE:
+            raise KnowledgeBaseServiceError(
+                f"Cannot attach archived Knowledge Base '{kb_id}' to task."
+            )
+        self.kb_repo.attach_to_task(task_id, kb_id)
+        self._session.flush()
 
     def create_task_evidence_snapshot(
         self,

@@ -248,6 +248,44 @@ class StageWorker:
                 )
                 return True
 
+            # Fencing check 1: Task must not be cancelled or failed
+            if current_task.task_status in (TaskStatus.CANCELLED, TaskStatus.FAILED):
+                logger.warning(
+                    f"Task '{current_task.task_id}' was cancelled or failed ({current_task.task_status.value}) "
+                    f"during stage '{acquired_job.stage.value}' execution. Discarding results."
+                )
+                return True
+
+            # Fencing check 2: Worker must still hold the lease
+            if current_job.lease_owner != self.worker_id:
+                logger.warning(
+                    f"Worker '{self.worker_id}' lost lease on job '{current_job.job_id}' "
+                    f"(current owner: '{current_job.lease_owner}'). Discarding results."
+                )
+                return True
+
+            # Fencing check 3: Job must still be in LEASED or RUNNING state
+            if current_job.status not in (JobStatus.LEASED, JobStatus.RUNNING):
+                logger.warning(
+                    f"Job '{current_job.job_id}' is no longer active ({current_job.status.value}). Discarding results."
+                )
+                return True
+
+            # Fencing check 4: Lease must not have expired before completion
+            if current_job.lease_expires_at is not None:
+                exp_at = current_job.lease_expires_at
+                fin_at = finished_at
+                if exp_at.tzinfo is None and fin_at.tzinfo is not None:
+                    exp_at = exp_at.replace(tzinfo=UTC)
+                elif exp_at.tzinfo is not None and fin_at.tzinfo is None:
+                    fin_at = fin_at.replace(tzinfo=UTC)
+                if exp_at < fin_at:
+                    logger.warning(
+                        f"Worker '{self.worker_id}' lease expired on job '{current_job.job_id}' "
+                        f"at {exp_at} (finished at {fin_at}). Discarding results."
+                    )
+                    return True
+
             output_ref_id: str | None = None
             if result.output_artifact_ref is not None:
                 artifact_repo.save_artifact_ref(result.output_artifact_ref)
@@ -270,27 +308,32 @@ class StageWorker:
             )
             exec_repo.record_execution(stage_exec)
 
-            if result.success:
-                current_job.mark_succeeded(output_task_artifact_ref_id=output_ref_id, now=finished_at)
-                job_repo.update_job(current_job)
-                workflow.on_stage_completed(current_task, current_job, now=finished_at)
-            else:
-                current_job.mark_failed(
-                    error_type=result.error_type or "FATAL",
-                    error_message=result.error_message or "",
-                    is_retryable=result.is_retryable,
-                    now=finished_at,
+            try:
+                if result.success:
+                    current_job.mark_succeeded(output_task_artifact_ref_id=output_ref_id, now=finished_at)
+                    job_repo.update_job_fenced(current_job, owner=self.worker_id, now=finished_at)
+                    workflow.on_stage_completed(current_task, current_job, now=finished_at)
+                else:
+                    current_job.mark_failed(
+                        error_type=result.error_type or "FATAL",
+                        error_message=result.error_message or "",
+                        is_retryable=result.is_retryable,
+                        now=finished_at,
+                    )
+                    job_repo.update_job_fenced(current_job, owner=self.worker_id, now=finished_at)
+                    workflow.on_stage_failed(
+                        current_task,
+                        current_job,
+                        error_type=result.error_type or "FATAL",
+                        error_message=result.error_message or "",
+                        now=finished_at,
+                    )
+                session.commit()
+            except Exception as fence_exc:
+                logger.warning(
+                    f"Fenced persistence aborted for job '{current_job.job_id}': {fence_exc}"
                 )
-                job_repo.update_job(current_job)
-                workflow.on_stage_failed(
-                    current_task,
-                    current_job,
-                    error_type=result.error_type or "FATAL",
-                    error_message=result.error_message or "",
-                    now=finished_at,
-                )
-
-            session.commit()
+                session.rollback()
 
         return True
 
@@ -329,7 +372,7 @@ def main() -> None:
     run_database_migrations()
     session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
-    registry = get_default_executor_registry()
+    registry = get_default_executor_registry(session_factory=session_factory)
     worker = StageWorker(
         session_factory=session_factory,
         registry=registry,

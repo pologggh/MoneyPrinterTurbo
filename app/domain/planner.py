@@ -31,6 +31,13 @@ class PlannerOutputSchemaError(PlannerError):
         super().__init__(message, code="LLM_OUTPUT_SCHEMA_ERROR")
 
 
+class PlannerProviderError(PlannerError):
+    """Raised when the LLM provider request fails before producing planner output."""
+
+    def __init__(self, message: str):
+        super().__init__(message, code="LLM_PROVIDER_ERROR")
+
+
 class PlannerOutputInvalidError(PlannerError):
     """Raised when LLM output violates domain constraints or semantic invariants."""
 
@@ -457,6 +464,11 @@ class ContentPlanner:
 
         for attempt in range(1 + self._max_retries):
             raw_response = self._call_llm(current_prompt)
+            if raw_response.startswith("Error:"):
+                provider_error = raw_response.removeprefix("Error:").strip()
+                raise PlannerProviderError(
+                    f"LLM provider request failed: {provider_error or 'unknown error'}"
+                )
             try:
                 plan_revision = self._parse_and_validate_output(
                     raw_response, input_data, previous_plan

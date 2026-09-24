@@ -7,6 +7,10 @@ from loguru import logger
 from pydantic import BaseModel, Field
 
 from app.application.evidence_service import TaskEvidenceCommandService
+from app.application.knowledge_base_service import (
+    KnowledgeBaseNotFoundError,
+    KnowledgeBaseServiceError,
+)
 from app.application.knowledge_retrieval_service import (
     KnowledgeProcessingService,
     KnowledgeRetrievalService,
@@ -60,6 +64,15 @@ def redact_sensitive_dict(data: dict[str, Any]) -> dict[str, Any]:
     return redacted
 
 
+class InitialEvidenceItemRequest(BaseModel):
+    source_type: SourceType = Field(..., description="Source type: TEXT or URL")
+    text_content: str | None = Field(default=None, description="Raw text for TEXT source type")
+    url: str | None = Field(default=None, description="URL for URL source type")
+    title: str | None = Field(default=None, description="Optional title or label for the source")
+    author: str | None = Field(default=None, description="Optional author attribution")
+    metadata: dict[str, Any] = Field(default_factory=dict, description="Custom metadata for the source")
+
+
 class CreateKnowledgeVideoTaskRequest(BaseModel):
     topic: str = Field(..., min_length=1, max_length=500)
     target_duration: float = Field(default=60.0, gt=0.0, le=3600.0)
@@ -68,6 +81,8 @@ class CreateKnowledgeVideoTaskRequest(BaseModel):
     workflow_policy: WorkflowPolicyType = Field(default=WorkflowPolicyType.AUTO)
     task_metadata: dict[str, Any] = Field(default_factory=dict)
     allow_research: bool = Field(default=False)
+    knowledge_base_ids: list[str] = Field(default_factory=list)
+    initial_evidence: list[InitialEvidenceItemRequest] = Field(default_factory=list)
 
 
 class RetryKnowledgeVideoTaskRequest(BaseModel):
@@ -99,6 +114,8 @@ def create_task(body: CreateKnowledgeVideoTaskRequest):
                 workflow_policy=body.workflow_policy,
                 task_metadata=body.task_metadata,
                 allow_research=body.allow_research,
+                knowledge_base_ids=body.knowledge_base_ids,
+                initial_evidence=body.initial_evidence,
             )
             # Find initial job
             from app.persistence.repositories import WorkflowJobRepository
@@ -120,6 +137,14 @@ def create_task(body: CreateKnowledgeVideoTaskRequest):
                 },
                 message="Task accepted",
             )
+        except KnowledgeBaseNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except KnowledgeBaseServiceError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except HTTPException:
+            raise
         except Exception as exc:
             logger.error(f"Failed to create KnowledgeVideoTask: {exc}")
             raise
@@ -332,10 +357,20 @@ def register_evidence(task_id: str, body: RegisterEvidenceRequest):
             elif body.source_type == SourceType.KNOWLEDGE_BASE:
                 if not body.kb_id:
                     raise HTTPException(status_code=400, detail="kb_id is required for KNOWLEDGE_BASE source type.")
-                doc = command_service.register_knowledge_base_source(
+                command_service.register_knowledge_base_source(
                     task_id=task_id,
                     kb_id=body.kb_id,
                     metadata=body.metadata,
+                )
+                session.commit()
+                return utils.get_response(
+                    201,
+                    data={
+                        "task_id": task_id,
+                        "knowledge_base_id": body.kb_id,
+                        "status": "ATTACHED",
+                    },
+                    message="Knowledge Base attached to task",
                 )
             else:
                 raise HTTPException(status_code=400, detail=f"Unsupported source type: {body.source_type}")
@@ -358,6 +393,10 @@ def register_evidence(task_id: str, body: RegisterEvidenceRequest):
                 },
                 message="Evidence source registered",
             )
+        except KnowledgeBaseNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except KnowledgeBaseServiceError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except HTTPException:
             raise
         except ValueError as exc:

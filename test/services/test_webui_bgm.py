@@ -22,6 +22,12 @@ I18N_DIR = ROOT_DIR / "webui" / "i18n"
 TEST_LOCALES = ("en", "zh")
 
 
+def legacy_app_test(timeout=30):
+    app = AppTest.from_file(str(WEBUI_MAIN), default_timeout=timeout)
+    app.session_state["app_view_mode"] = "legacy_video_generation"
+    return app
+
+
 def _valid_wav_bytes() -> bytes:
     """生成一个很短的标准 WAV，避免测试依赖仓库外部音频或系统录音文件。"""
     output = io.BytesIO()
@@ -57,7 +63,7 @@ class TestWebuiBackgroundMusic(unittest.TestCase):
         return widget
 
     def _open_custom_bgm_panel(self, locale):
-        app = AppTest.from_file(str(WEBUI_MAIN), default_timeout=30)
+        app = legacy_app_test()
         # CI 没有本机 config.toml 中保存的语言。显式覆盖 session locale，既能
         # 复现 CI 的英文默认值，也能保护开发者常用的中文界面回归。
         app.session_state["ui_language"] = locale
@@ -68,7 +74,7 @@ class TestWebuiBackgroundMusic(unittest.TestCase):
         return app
 
     def _open_sonilo_bgm_panel(self, locale):
-        app = AppTest.from_file(str(WEBUI_MAIN), default_timeout=30)
+        app = legacy_app_test()
         app.session_state["ui_language"] = locale
         app.run()
         source_select = self._widget_by_key(app.selectbox, "bgm_type_select")
@@ -76,7 +82,7 @@ class TestWebuiBackgroundMusic(unittest.TestCase):
         return app
 
     def _open_elevenlabs_bgm_panel(self, locale):
-        app = AppTest.from_file(str(WEBUI_MAIN), default_timeout=30)
+        app = legacy_app_test()
         app.session_state["ui_language"] = locale
         app.run()
         source_select = self._widget_by_key(app.selectbox, "bgm_type_select")
@@ -84,7 +90,7 @@ class TestWebuiBackgroundMusic(unittest.TestCase):
         return app
 
     def _open_preset_bgm_panel(self, locale):
-        app = AppTest.from_file(str(WEBUI_MAIN), default_timeout=30)
+        app = legacy_app_test()
         app.session_state["ui_language"] = locale
         app.run()
         source_select = self._widget_by_key(app.selectbox, "bgm_type_select")
@@ -189,7 +195,7 @@ class TestWebuiBackgroundMusic(unittest.TestCase):
                     return_value=[str(saved_song), str(restored_song)],
                 ),
             ):
-                app = AppTest.from_file(str(WEBUI_MAIN), default_timeout=30)
+                app = legacy_app_test()
                 app.session_state["ui_language"] = "en"
                 app.session_state["task_restore_payload"] = {
                     "task_id": "preset-bgm-restore-test",
@@ -467,7 +473,7 @@ class TestWebuiBackgroundMusic(unittest.TestCase):
             patch.object(config, "save_config"),
             patch.object(voice, "get_elevenlabs_voices", return_value=[]),
         ):
-            app = AppTest.from_file(str(WEBUI_MAIN), default_timeout=30)
+            app = legacy_app_test()
             app.session_state["ui_language"] = "en"
             app.run()
             self._widget_by_key(

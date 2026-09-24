@@ -11,6 +11,12 @@ ROOT_DIR = Path(__file__).parent.parent.parent
 WEBUI_MAIN = ROOT_DIR / "webui" / "Main.py"
 
 
+def legacy_app_test(timeout=60):
+    app = AppTest.from_file(str(WEBUI_MAIN), default_timeout=timeout)
+    app.session_state["app_view_mode"] = "legacy_video_generation"
+    return app
+
+
 def _widget_by_key(elements, key):
     return next(
         item
@@ -24,7 +30,7 @@ def _new_app():
     # A cold Python 3.11 environment can spend over 30 seconds importing the
     # full Streamlit entrypoint and optional media stack. Keep the assertion
     # timeout above that one-time startup cost so targeted runs do not flake.
-    app = AppTest.from_file(str(WEBUI_MAIN), default_timeout=60)
+    app = legacy_app_test()
     app.session_state["ui_language"] = "en"
     app.run()
     assert [str(item.value) for item in app.exception] == []

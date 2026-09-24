@@ -41,8 +41,10 @@ class KnowledgeVideoApiClient:
         self.api_key = api_key or os.environ.get("API_KEY")
         self.timeout = timeout
 
-    def _get_headers(self) -> dict[str, str]:
-        headers = {"Content-Type": "application/json"}
+    def _get_headers(self, is_json: bool = True) -> dict[str, str]:
+        headers: dict[str, str] = {}
+        if is_json:
+            headers["Content-Type"] = "application/json"
         if self.api_key:
             headers["x-api-key"] = self.api_key
             headers["Authorization"] = f"Bearer {self.api_key}"
@@ -54,15 +56,20 @@ class KnowledgeVideoApiClient:
         path: str,
         params: dict[str, Any] | None = None,
         json_data: Any = None,
+        files: Any = None,
+        data: Any = None,
     ) -> dict[str, Any]:
         url = f"{self.base_url}{path}"
+        headers = self._get_headers(is_json=(files is None))
         try:
             resp = requests.request(
                 method=method,
                 url=url,
                 params=params,
                 json=json_data,
-                headers=self._get_headers(),
+                files=files,
+                data=data,
+                headers=headers,
                 timeout=self.timeout,
             )
         except requests.exceptions.RequestException as exc:
@@ -88,7 +95,7 @@ class KnowledgeVideoApiClient:
         if isinstance(data, dict):
             if "data" in data:
                 return data["data"]
-            if "status" in data and 200 <= data["status"] < 300:
+            if "status" in data and isinstance(data["status"], int) and 200 <= data["status"] < 300:
                 return data.get("data", {})
         return data
 
@@ -101,6 +108,8 @@ class KnowledgeVideoApiClient:
         workflow_policy: str = "AUTO",
         task_metadata: dict[str, Any] | None = None,
         allow_research: bool = False,
+        knowledge_base_ids: list[str] | None = None,
+        initial_evidence: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Creates a new Knowledge Video Task."""
         payload = {
@@ -111,6 +120,8 @@ class KnowledgeVideoApiClient:
             "workflow_policy": workflow_policy,
             "task_metadata": task_metadata or {},
             "allow_research": allow_research,
+            "knowledge_base_ids": knowledge_base_ids or [],
+            "initial_evidence": initial_evidence or [],
         }
         return self._request("POST", "/knowledge-video-tasks", json_data=payload)
 
@@ -255,3 +266,105 @@ class KnowledgeVideoApiClient:
             return resp.content
         except requests.exceptions.RequestException as exc:
             raise ApiClientError(f"Failed to download delivery artifact '{target}': {exc}") from exc
+
+    # =========================================================================
+    # Knowledge Base API Methods
+    # =========================================================================
+
+    def create_knowledge_base(
+        self,
+        name: str,
+        description: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Creates a new persistent Knowledge Base."""
+        payload: dict[str, Any] = {"name": name}
+        if description is not None:
+            payload["description"] = description
+        if metadata is not None:
+            payload["metadata"] = metadata
+        return self._request("POST", "/knowledge-bases", json_data=payload)
+
+    def list_knowledge_bases(self, status: str | None = None) -> list[dict[str, Any]]:
+        """Lists all Knowledge Bases, optionally filtered by status (ACTIVE / ARCHIVED)."""
+        params: dict[str, Any] = {}
+        if status:
+            params["status"] = status
+        res = self._request("GET", "/knowledge-bases", params=params)
+        if isinstance(res, dict) and "items" in res:
+            return res["items"]
+        if isinstance(res, list):
+            return res
+        return []
+
+    def get_knowledge_base(self, kb_id: str) -> dict[str, Any]:
+        """Retrieves details of a Knowledge Base by its ID."""
+        return self._request("GET", f"/knowledge-bases/{kb_id}")
+
+    def update_knowledge_base(
+        self,
+        kb_id: str,
+        name: str | None = None,
+        description: str | None = None,
+    ) -> dict[str, Any]:
+        """Updates the name and/or description of an existing Knowledge Base."""
+        payload: dict[str, Any] = {}
+        if name is not None:
+            payload["name"] = name
+        if description is not None:
+            payload["description"] = description
+        return self._request("PATCH", f"/knowledge-bases/{kb_id}", json_data=payload)
+
+    def archive_knowledge_base(self, kb_id: str) -> dict[str, Any]:
+        """Archives (soft-deletes) a Knowledge Base."""
+        return self._request("DELETE", f"/knowledge-bases/{kb_id}")
+
+    def upload_knowledge_base_document(
+        self,
+        kb_id: str,
+        file_name: str,
+        file_bytes: bytes,
+        content_type: str = "text/plain",
+        title: str | None = None,
+    ) -> dict[str, Any]:
+        """Uploads a multipart document into a Knowledge Base for parsing and indexing."""
+        files = {"file": (file_name, file_bytes, content_type)}
+        data: dict[str, Any] = {}
+        if title:
+            data["title"] = title
+        return self._request(
+            "POST",
+            f"/knowledge-bases/{kb_id}/documents",
+            files=files,
+            data=data if data else None,
+        )
+
+    def list_knowledge_base_documents(self, kb_id: str) -> list[dict[str, Any]]:
+        """Lists all documents registered in a Knowledge Base."""
+        res = self._request("GET", f"/knowledge-bases/{kb_id}/documents")
+        if isinstance(res, dict) and "items" in res:
+            return res["items"]
+        if isinstance(res, list):
+            return res
+        return []
+
+    def retry_knowledge_base_document(self, kb_id: str, doc_id: str) -> dict[str, Any]:
+        """Retries parsing, chunking, and embedding for a failed Knowledge Base document."""
+        return self._request("POST", f"/knowledge-bases/{kb_id}/documents/{doc_id}/retry")
+
+    def attach_knowledge_base_to_task(self, task_id: str, kb_id: str) -> dict[str, Any]:
+        """Attaches a Knowledge Base to a Knowledge Video Task."""
+        return self._request("POST", f"/tasks/{task_id}/knowledge-bases/{kb_id}")
+
+    def detach_knowledge_base_from_task(self, task_id: str, kb_id: str) -> dict[str, Any]:
+        """Detaches a Knowledge Base from a Knowledge Video Task."""
+        return self._request("DELETE", f"/tasks/{task_id}/knowledge-bases/{kb_id}")
+
+    def list_task_knowledge_bases(self, task_id: str) -> list[dict[str, Any]]:
+        """Lists all Knowledge Bases attached to a Knowledge Video Task."""
+        res = self._request("GET", f"/tasks/{task_id}/knowledge-bases")
+        if isinstance(res, dict) and "items" in res:
+            return res["items"]
+        if isinstance(res, list):
+            return res
+        return []

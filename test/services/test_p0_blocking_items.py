@@ -458,7 +458,7 @@ class TestP0BlockingItems:
         res_bad = src_adapter.execute(req_bad, cand_src, dest_dir)
         assert res_bad.outcome_type == ProviderOutcomeType.CAPABILITY_INCOMPATIBLE
 
-        # 3. Diagram execution -> CAPABILITY_INCOMPATIBLE
+        # 3. Diagram execution -> local PNG
         cand_diag = _create_sample_candidate(
             capability_id="system:diagram_renderer:DIAGRAM_RENDER",
             provider="system_diagram",
@@ -467,7 +467,94 @@ class TestP0BlockingItems:
             requested_visual_type=VisualType.DIAGRAM,
         )
         res_diag = diagram_adapter.execute(req_with_ref, cand_diag, dest_dir)
-        assert res_diag.outcome_type == ProviderOutcomeType.CAPABILITY_INCOMPATIBLE
+        assert res_diag.outcome_type == ProviderOutcomeType.SUCCESS
+        assert Path(res_diag.file_path).suffix == ".png"
+
+    def test_system_diagram_adapter_renders_probeable_png(self, tmp_path):
+        from PIL import Image
+
+        adapter = AdapterRegistry().get_adapter("system_diagram")
+        candidate = _create_sample_candidate(
+            capability_id="system:diagram_renderer:DIAGRAM_RENDER",
+            provider="system_diagram",
+            model="diagram_card_v1",
+            generation_mode=GenerationMode.DIAGRAM_RENDER,
+            requested_visual_type=VisualType.DIAGRAM,
+        )
+        request = AssetRoutingRequest(
+            shot_id="shot-diagram-1",
+            shot_revision_id="rev-diagram-1",
+            requested_visual_type=VisualType.DIAGRAM,
+            target_duration=4.0,
+            visual_goal="展示 Ollama 与 Dify 如何构成本地知识库",
+            scene_description="Ollama 提供本地模型，Dify 编排知识流程，最终形成知识库",
+            generation_prompt="Ollama -> Dify -> 本地知识库",
+            camera_movement="static",
+            aspect_ratio="16:9",
+        )
+
+        result = adapter.execute(request, candidate, tmp_path / "diagram")
+
+        assert result.outcome_type == ProviderOutcomeType.SUCCESS
+        output_path = Path(result.file_path)
+        assert output_path.suffix == ".png"
+        with Image.open(output_path) as image:
+            assert image.size == (1920, 1080)
+            assert image.format == "PNG"
+
+    def test_system_knowledge_card_adapter_renders_probeable_png(self, tmp_path):
+        from PIL import Image
+
+        adapter = AdapterRegistry().get_adapter("system_knowledge_card")
+        assert isinstance(adapter, LocalAssetAdapter)
+
+        candidate = _create_sample_candidate(
+            capability_id="system:knowledge_card:TEXT_TO_IMAGE",
+            provider="system_knowledge_card",
+            model="knowledge_card_v1",
+            generation_mode=GenerationMode.TEXT_TO_IMAGE,
+            requested_visual_type=VisualType.AI_IMAGE,
+        )
+
+        aspect_expected_sizes = {
+            "16:9": (1920, 1080),
+            "9:16": (1080, 1920),
+            "1:1": (1080, 1080),
+        }
+
+        for ar, expected_size in aspect_expected_sizes.items():
+            request = AssetRoutingRequest(
+                shot_id=f"shot-kc-{ar.replace(':', '_')}",
+                shot_revision_id=f"rev-kc-{ar.replace(':', '_')}",
+                requested_visual_type=VisualType.AI_IMAGE,
+                target_duration=4.0,
+                visual_goal="知识图卡展示核心概念",
+                scene_description="概念A与概念B的关系对比，关键特性展示",
+                generation_prompt="A -> B -> 核心结论",
+                camera_movement="static",
+                aspect_ratio=ar,
+            )
+
+            result = adapter.execute(request, candidate, tmp_path / f"kc_{ar.replace(':', '_')}")
+
+            assert result.outcome_type == ProviderOutcomeType.SUCCESS
+            assert result.file_path is not None
+            output_path = Path(result.file_path)
+            assert output_path.is_file()
+            assert output_path.stat().st_size > 0
+            assert output_path.suffix == ".png"
+            with Image.open(output_path) as image:
+                assert image.size == expected_size
+                assert image.format == "PNG"
+
+            assert result.raw_response.get("provider") == "system_knowledge_card"
+            assert result.raw_response.get("renderer") == "knowledge_card_v1"
+
+        # Verify error handling returns DEFINITIVE_TECHNICAL_FAILURE
+        with patch("app.services.asset_adapters.local_asset_adapter.render_diagram_card", side_effect=RuntimeError("card render error")):
+            fail_result = adapter.execute(request, candidate, tmp_path / "kc_fail")
+            assert fail_result.outcome_type == ProviderOutcomeType.DEFINITIVE_TECHNICAL_FAILURE
+            assert fail_result.error_code in ("KNOWLEDGE_CARD_RENDER_FAILED", "DIAGRAM_RENDER_FAILED")
 
     # -------------------------------------------------------------
     # 20 & 21. Truly Persist AttemptRequest & Re-read Idempotency Key

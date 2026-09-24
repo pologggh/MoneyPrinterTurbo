@@ -129,10 +129,11 @@ def test_unsupported_stage_remains_queued_in_production_registry(session_factory
         job_repo.create_job(job)
         session.commit()
 
-    # Create worker with default production registry
+    # Create worker with registry where DELIVERY is unsupported
+    unsupported_registry = StageExecutorRegistry()
     worker = StageWorker(
         session_factory=session_factory,
-        registry=get_default_executor_registry(session_factory=session_factory),
+        registry=unsupported_registry,
         worker_id="prod-worker-1",
     )
 

@@ -11,6 +11,12 @@ from app.services import voice
 
 ROOT_DIR = Path(__file__).parent.parent.parent
 WEBUI_MAIN = ROOT_DIR / "webui" / "Main.py"
+
+
+def legacy_app_test(timeout=30):
+    app = AppTest.from_file(str(WEBUI_MAIN), default_timeout=timeout)
+    app.session_state["app_view_mode"] = "legacy_video_generation"
+    return app
 I18N_DIR = ROOT_DIR / "webui" / "i18n"
 LOCALES = ("de", "en", "es", "id", "pt", "ru", "tr", "vi", "zh")
 
@@ -83,7 +89,7 @@ def test_tts_provider_inputs_render_the_standardized_labels():
         patch.object(voice, "get_elevenlabs_voices", return_value=[]),
         patch.object(voice, "get_chatterbox_voices", return_value=[]),
     ):
-        app = AppTest.from_file(str(WEBUI_MAIN), default_timeout=30)
+        app = legacy_app_test()
         app.session_state["ui_language"] = "zh"
         app.run()
 
@@ -118,7 +124,7 @@ def test_elevenlabs_reconnect_restores_saved_key_before_loading_voices():
         patch.object(config, "try_save_config", return_value=True),
         patch.object(voice, "get_elevenlabs_voices", return_value=[]) as get_voices,
     ):
-        app = AppTest.from_file(str(WEBUI_MAIN), default_timeout=30)
+        app = legacy_app_test()
         app.session_state["ui_language"] = "en"
         app.session_state["elevenlabs_api_key_input"] = ""
         app.run()
@@ -147,7 +153,7 @@ def test_elevenlabs_environment_key_is_used_without_persisting_it():
         patch.dict(os.environ, {"ELEVENLABS_API_KEY": "env-key"}),
         patch.object(voice, "get_elevenlabs_voices", return_value=[]) as get_voices,
     ):
-        app = AppTest.from_file(str(WEBUI_MAIN), default_timeout=30)
+        app = legacy_app_test()
         app.session_state["ui_language"] = "en"
         app.run()
 
@@ -168,7 +174,7 @@ def test_minimax_reconnect_restores_saved_tts_key():
         patch.object(config, "ui", test_ui),
         patch.object(config, "try_save_config", return_value=True),
     ):
-        app = AppTest.from_file(str(WEBUI_MAIN), default_timeout=30)
+        app = legacy_app_test()
         app.session_state["ui_language"] = "en"
         app.session_state["minimax_tts_api_key_input"] = ""
         app.run()
@@ -194,7 +200,7 @@ def test_minimax_shared_llm_key_is_not_duplicated_in_tts_config():
         patch.object(config, "ui", test_ui),
         patch.object(config, "try_save_config", return_value=True),
     ):
-        app = AppTest.from_file(str(WEBUI_MAIN), default_timeout=30)
+        app = legacy_app_test()
         app.session_state["ui_language"] = "en"
         app.run()
 
@@ -227,7 +233,7 @@ def test_minimax_voice_selector_accepts_a_custom_voice_id():
         patch.object(config, "ui", test_ui),
         patch.object(config, "try_save_config", return_value=True),
     ):
-        app = AppTest.from_file(str(WEBUI_MAIN), default_timeout=30)
+        app = legacy_app_test()
         app.session_state["ui_language"] = "en"
         app.run()
         voice_select = _widget_by_key(
@@ -277,7 +283,7 @@ def test_minimax_voices_load_only_on_demand_and_sync_the_selected_voice():
             return_value=catalog,
         ) as get_catalog,
     ):
-        app = AppTest.from_file(str(WEBUI_MAIN), default_timeout=30)
+        app = legacy_app_test()
         app.session_state["ui_language"] = "zh"
         app.run()
 

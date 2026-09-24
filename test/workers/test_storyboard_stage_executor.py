@@ -363,12 +363,12 @@ def test_production_registry_retains_prior_stages():
     assert isinstance(registry.get_executor(Stage.SCRIPT), ScriptStageExecutor)
 
 
-def test_delivery_remains_unsupported():
-    """4. Verify DELIVERY remains unsupported in default registry."""
+def test_delivery_is_registered():
+    """Verify DELIVERY is registered in the completed default registry."""
     registry = get_default_executor_registry()
     assert registry.has_executor(Stage.QUALITY_REVIEW)
-    assert not registry.has_executor(Stage.DELIVERY)
-    assert registry.get_executor(Stage.DELIVERY) is None
+    assert registry.has_executor(Stage.DELIVERY)
+    assert registry.get_executor(Stage.DELIVERY) is not None
 
 
 # =============================================================================

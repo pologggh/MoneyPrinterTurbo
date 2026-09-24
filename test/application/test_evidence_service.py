@@ -13,6 +13,10 @@ from app.application.evidence_service import (
     EvidenceResolutionService,
     TaskEvidenceCommandService,
 )
+from app.application.knowledge_base_service import (
+    KnowledgeBaseNotFoundError,
+    KnowledgeBaseServiceError,
+)
 from app.application.stage_executor_registry import get_default_executor_registry
 from app.domain.evidence import (
     ClaimType,
@@ -27,6 +31,7 @@ from app.domain.evidence import (
     UnsupportedSourceTypeError,
     VerificationStatus,
 )
+from app.domain.knowledge_base import KnowledgeBase, KnowledgeBaseStatus
 from app.domain.knowledge_video_task import KnowledgeVideoTask
 from app.domain.shot import ShotRevision
 from app.domain.workflow_job import WorkflowJob
@@ -41,6 +46,7 @@ from app.domain.workflow_state import (
 from app.persistence.models import Base
 from app.persistence.repositories import (
     EvidenceRepository,
+    KnowledgeBaseRepository,
     KnowledgeVideoTaskRepository,
     WorkflowJobRepository,
 )
@@ -159,8 +165,35 @@ def test_register_url_source(session_factory):
         assert doc.source_locator == "https://en.wikipedia.org/wiki/Big_Bang"
 
 
-def test_register_knowledge_base_source_honest_failure(session_factory):
-    """Verify registering a KB source fails honestly since KB subsystem is not yet implemented."""
+def test_register_knowledge_base_source_success(session_factory):
+    """Verify registering a valid active KB attaches it to the task."""
+    task_id = f"task_{uuid4().hex[:8]}"
+
+    with session_factory() as session:
+        task_repo = KnowledgeVideoTaskRepository(session)
+        task_repo.save_task(
+            KnowledgeVideoTask.create(task_id=task_id, topic="KB Test", target_duration=60.0, workflow_policy=WorkflowPolicyType.AUTO)
+        )
+        kb_repo = KnowledgeBaseRepository(session)
+        kb = KnowledgeBase.create(name="Deep Learning KB")
+        kb_repo.save_knowledge_base(kb)
+        session.commit()
+        kb_id = kb.knowledge_base_id
+
+    with session_factory() as session:
+        cmd_service = TaskEvidenceCommandService(session)
+        cmd_service.register_knowledge_base_source(task_id=task_id, kb_id=kb_id)
+        session.commit()
+
+    with session_factory() as session:
+        kb_repo = KnowledgeBaseRepository(session)
+        attached = kb_repo.list_kbs_for_task(task_id)
+        assert len(attached) == 1
+        assert attached[0].knowledge_base_id == kb_id
+
+
+def test_register_knowledge_base_source_not_found(session_factory):
+    """Verify registering a non-existent KB raises KnowledgeBaseNotFoundError."""
     task_id = f"task_{uuid4().hex[:8]}"
 
     with session_factory() as session:
@@ -172,8 +205,8 @@ def test_register_knowledge_base_source_honest_failure(session_factory):
 
     with session_factory() as session:
         cmd_service = TaskEvidenceCommandService(session)
-        with pytest.raises(UnsupportedSourceTypeError, match="Knowledge Base subsystem is not yet implemented"):
-            cmd_service.register_knowledge_base_source(task_id=task_id, kb_id="kb_12345")
+        with pytest.raises(KnowledgeBaseNotFoundError, match="not found"):
+            cmd_service.register_knowledge_base_source(task_id=task_id, kb_id="kb_missing_123")
 
 
 def test_terminal_task_cannot_register_evidence(session_factory):

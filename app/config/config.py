@@ -499,6 +499,7 @@ def save_config():
         config_to_save["chatterbox"] = dict(chatterbox)
         config_to_save["kokoro"] = dict(kokoro)
         config_to_save["fish_audio"] = dict(fish_audio)
+        config_to_save["embedding"] = dict(embedding)
         config_to_save["ui"] = dict(ui)
         serialized_config = toml.dumps(config_to_save)
 
@@ -556,6 +557,21 @@ elevenlabs = _SynchronizedConfig(_cfg.get("elevenlabs", {}))
 chatterbox = _SynchronizedConfig(_cfg.get("chatterbox", {}))
 kokoro = _SynchronizedConfig(_cfg.get("kokoro", {}))
 fish_audio = _SynchronizedConfig(_cfg.get("fish_audio", {}))
+embedding = _SynchronizedConfig(
+    _cfg.get(
+        "embedding",
+        {
+            "enabled": False,
+            "provider": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "api_key": "",
+            "model": "text-embedding-3-small",
+            "dimension": 1536,
+            "timeout": 30,
+            "batch_size": 32,
+        },
+    )
+)
 ui = _SynchronizedConfig(
     _cfg.get(
         "ui",

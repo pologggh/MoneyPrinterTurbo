@@ -28,7 +28,7 @@ from app.domain.knowledge_video_task import KnowledgeVideoTask
 from app.domain.task_artifact import ArtifactType, TaskArtifactRef
 from app.domain.workflow_job import WorkflowJob
 from app.domain.workflow_state import JobErrorType, Stage
-from app.persistence.repositories import EvidenceRepository
+from app.persistence.repositories import EvidenceRepository, KnowledgeBaseRepository
 from app.persistence.session import get_session
 from app.services.knowledge.bm25_retriever import DEFAULT_RETRIEVAL_POLICY_VERSION
 from app.services.knowledge.chunking import KnowledgeChunker
@@ -107,7 +107,10 @@ class EvidenceStageExecutor:
         sources: list[SourceDocument] = []
         with get_session(self._session_factory) as session:
             ev_repo = EvidenceRepository(session)
-            sources = ev_repo.list_sources_for_task(task_id)
+            kb_repo = KnowledgeBaseRepository(session)
+            sources = kb_repo.list_sources_for_task_with_kbs(task_id)
+            if not sources:
+                sources = ev_repo.list_sources_for_task(task_id)
 
         task_source_count = len(sources)
         if task_source_count == 0:
