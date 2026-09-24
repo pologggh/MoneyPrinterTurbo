@@ -89,6 +89,20 @@ class JobErrorType(str, Enum):
     FATAL = "FATAL"
 
 
+class ArtifactType(str, Enum):
+    """Explicit artifact reference types linking KnowledgeVideoTask to domain entities."""
+    EVIDENCE_SNAPSHOT = "EVIDENCE_SNAPSHOT"
+    CONTENT_PLAN_REVISION = "CONTENT_PLAN_REVISION"
+    SCRIPT_REVISION = "SCRIPT_REVISION"
+    STORYBOARD_SNAPSHOT = "STORYBOARD_SNAPSHOT"
+    ASSET_ROUTE_PLAN = "ASSET_ROUTE_PLAN"
+    EXECUTION_RUN = "EXECUTION_RUN"
+    AUDIO_OUTPUT = "AUDIO_OUTPUT"
+    COMPOSITION_OUTPUT = "COMPOSITION_OUTPUT"
+    EVALUATION_SNAPSHOT = "EVALUATION_SNAPSHOT"
+    DELIVERY_MANIFEST = "DELIVERY_MANIFEST"
+
+
 # =============================================================================
 # Domain Exceptions
 # =============================================================================

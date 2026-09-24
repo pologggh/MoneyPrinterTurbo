@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Sequence
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
@@ -35,9 +35,11 @@ from app.domain.shot import Shot, ShotRevision
 from app.domain.stage_execution import StageExecution
 from app.domain.storyboard import StoryboardSnapshot
 from app.domain.storyboard_approval import StoryboardApprovalRecord
+from app.domain.task_artifact import TaskArtifactRef
 from app.domain.trace import TraceEvent, TraceEventStatus, TraceRoot
 from app.domain.workflow_job import WorkflowJob
 from app.domain.workflow_state import (
+    ArtifactType,
     JobStatus,
     Stage,
     WorkflowConflictError,
@@ -87,6 +89,8 @@ from app.persistence.converters import (
     storyboard_approval_record_to_orm,
     storyboard_snapshot_from_orm,
     storyboard_snapshot_to_orm,
+    task_artifact_ref_from_orm,
+    task_artifact_ref_to_orm,
     trace_event_from_orm,
     trace_event_to_orm,
     trace_root_from_orm,
@@ -117,6 +121,7 @@ from app.persistence.models import (
     StageExecutionORM,
     StoryboardApprovalRecordORM,
     StoryboardSnapshotORM,
+    TaskArtifactRefORM,
     TraceEventORM,
     TraceRootORM,
     WorkflowJobORM,
@@ -1367,6 +1372,8 @@ class WorkflowJobRepository:
         orm.lease_owner = job.lease_owner
         orm.lease_expires_at = job.lease_expires_at
         orm.heartbeat_at = job.heartbeat_at
+        orm.input_task_artifact_ref_id = job.input_task_artifact_ref_id
+        orm.output_task_artifact_ref_id = job.output_task_artifact_ref_id
         orm.input_artifact_revision_id = job.input_artifact_revision_id
         orm.output_artifact_revision_id = job.output_artifact_revision_id
         orm.error_type = job.error_type
@@ -1379,25 +1386,37 @@ class WorkflowJobRepository:
     def acquire_next_available_job(
         self,
         owner: str,
+        supported_stages: set[Stage] | Sequence[Stage] | None = None,
         lease_duration_seconds: int = 300,
         now: datetime | None = None,
     ) -> WorkflowJob | None:
         from datetime import UTC, timedelta
         ts = now or datetime.now(UTC)
 
+        if supported_stages is not None:
+            if len(supported_stages) == 0:
+                return None
+            stage_vals = [s.value if hasattr(s, "value") else str(s) for s in supported_stages]
+        else:
+            stage_vals = None
+
+        conditions = [
+            (
+                (WorkflowJobORM.status == JobStatus.QUEUED.value)
+                & (WorkflowJobORM.available_at <= ts)
+            )
+            | (
+                WorkflowJobORM.status.in_([JobStatus.LEASED.value, JobStatus.RUNNING.value])
+                & (WorkflowJobORM.lease_expires_at != None)
+                & (WorkflowJobORM.lease_expires_at <= ts)
+            )
+        ]
+        if stage_vals is not None:
+            conditions.append(WorkflowJobORM.stage.in_(stage_vals))
+
         stmt = (
             select(WorkflowJobORM)
-            .where(
-                (
-                    (WorkflowJobORM.status == JobStatus.QUEUED.value)
-                    & (WorkflowJobORM.available_at <= ts)
-                )
-                | (
-                    WorkflowJobORM.status.in_([JobStatus.LEASED.value, JobStatus.RUNNING.value])
-                    & (WorkflowJobORM.lease_expires_at != None)
-                    & (WorkflowJobORM.lease_expires_at <= ts)
-                )
-            )
+            .where(*conditions)
             .order_by(WorkflowJobORM.available_at.asc(), WorkflowJobORM.created_at.asc())
             .limit(1)
         )
@@ -1506,6 +1525,49 @@ class StageExecutionRepository:
         )
         orm = self._session.scalars(stmt).first()
         return stage_execution_from_orm(orm) if orm is not None else None
+
+
+class TaskArtifactRepository:
+    """Repository for managing immutable task artifact references."""
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def save_artifact_ref(self, ref: TaskArtifactRef) -> TaskArtifactRef:
+        orm = task_artifact_ref_to_orm(ref)
+        self._session.add(orm)
+        self._session.flush()
+        return task_artifact_ref_from_orm(orm)
+
+    def get_artifact_ref(self, ref_id: str) -> TaskArtifactRef | None:
+        orm = self._session.get(TaskArtifactRefORM, ref_id)
+        return task_artifact_ref_from_orm(orm) if orm is not None else None
+
+    def list_artifact_refs_for_task(self, task_id: str) -> list[TaskArtifactRef]:
+        stmt = (
+            select(TaskArtifactRefORM)
+            .where(TaskArtifactRefORM.task_id == task_id)
+            .order_by(TaskArtifactRefORM.created_at.asc())
+        )
+        return [task_artifact_ref_from_orm(r) for r in self._session.scalars(stmt).all()]
+
+    def get_latest_artifact_ref(
+        self,
+        task_id: str,
+        stage: Stage | None = None,
+        artifact_type: ArtifactType | None = None,
+    ) -> TaskArtifactRef | None:
+        stmt = select(TaskArtifactRefORM).where(TaskArtifactRefORM.task_id == task_id)
+        if stage is not None:
+            stage_val = stage.value if hasattr(stage, "value") else str(stage)
+            stmt = stmt.where(TaskArtifactRefORM.stage == stage_val)
+        if artifact_type is not None:
+            type_val = artifact_type.value if hasattr(artifact_type, "value") else str(artifact_type)
+            stmt = stmt.where(TaskArtifactRefORM.artifact_type == type_val)
+        stmt = stmt.order_by(TaskArtifactRefORM.created_at.desc()).limit(1)
+        orm = self._session.scalars(stmt).first()
+        return task_artifact_ref_from_orm(orm) if orm is not None else None
+
 
 
 

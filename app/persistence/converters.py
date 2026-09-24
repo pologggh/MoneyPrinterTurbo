@@ -12,8 +12,10 @@ from app.domain.shot import Shot, ShotRevision
 from app.domain.stage_execution import StageExecution
 from app.domain.storyboard import StoryboardSnapshot
 from app.domain.storyboard_approval import StoryboardApprovalRecord
+from app.domain.task_artifact import TaskArtifactRef
 from app.domain.workflow_job import WorkflowJob
 from app.domain.workflow_state import (
+    ArtifactType,
     JobErrorType,
     JobStatus,
     Stage,
@@ -50,6 +52,7 @@ from app.persistence.models import (
     StoryboardApprovalRecordORM,
     StoryboardSnapshotORM,
     StoryboardSnapshotShotRevisionORM,
+    TaskArtifactRefORM,
     TraceEventORM,
     TraceRootORM,
     WorkflowJobORM,
@@ -1420,6 +1423,8 @@ def workflow_job_to_orm(job: WorkflowJob) -> WorkflowJobORM:
         heartbeat_at=job.heartbeat_at,
         input_artifact_revision_id=job.input_artifact_revision_id,
         output_artifact_revision_id=job.output_artifact_revision_id,
+        input_task_artifact_ref_id=job.input_task_artifact_ref_id or job.input_artifact_revision_id,
+        output_task_artifact_ref_id=job.output_task_artifact_ref_id or job.output_artifact_revision_id,
         error_type=job.error_type,
         error_message=job.error_message,
         created_at=job.created_at,
@@ -1430,6 +1435,8 @@ def workflow_job_to_orm(job: WorkflowJob) -> WorkflowJobORM:
 
 def workflow_job_from_orm(orm: WorkflowJobORM) -> WorkflowJob:
     """Reconstructs a domain WorkflowJob from a WorkflowJobORM record."""
+    ref_in = orm.input_task_artifact_ref_id or orm.input_artifact_revision_id
+    ref_out = orm.output_task_artifact_ref_id or orm.output_artifact_revision_id
     return WorkflowJob(
         job_id=orm.job_id,
         task_id=orm.task_id,
@@ -1442,8 +1449,10 @@ def workflow_job_from_orm(orm: WorkflowJobORM) -> WorkflowJob:
         lease_owner=orm.lease_owner,
         lease_expires_at=orm.lease_expires_at,
         heartbeat_at=orm.heartbeat_at,
-        input_artifact_revision_id=orm.input_artifact_revision_id,
-        output_artifact_revision_id=orm.output_artifact_revision_id,
+        input_artifact_revision_id=ref_in,
+        output_artifact_revision_id=ref_out,
+        input_task_artifact_ref_id=ref_in,
+        output_task_artifact_ref_id=ref_out,
         error_type=orm.error_type,
         error_message=orm.error_message,
         created_at=orm.created_at,
@@ -1463,6 +1472,8 @@ def stage_execution_to_orm(execution: StageExecution) -> StageExecutionORM:
         status=execution.status,
         input_artifact_revision_id=execution.input_artifact_revision_id,
         output_artifact_revision_id=execution.output_artifact_revision_id,
+        input_task_artifact_ref_id=execution.input_task_artifact_ref_id or execution.input_artifact_revision_id,
+        output_task_artifact_ref_id=execution.output_task_artifact_ref_id or execution.output_artifact_revision_id,
         error_type=execution.error_type,
         error_message=execution.error_message,
         duration_ms=execution.duration_ms,
@@ -1473,6 +1484,8 @@ def stage_execution_to_orm(execution: StageExecution) -> StageExecutionORM:
 
 def stage_execution_from_orm(orm: StageExecutionORM) -> StageExecution:
     """Reconstructs a domain StageExecution from a StageExecutionORM record."""
+    ref_in = orm.input_task_artifact_ref_id or orm.input_artifact_revision_id
+    ref_out = orm.output_task_artifact_ref_id or orm.output_artifact_revision_id
     return StageExecution(
         stage_execution_id=orm.stage_execution_id,
         task_id=orm.task_id,
@@ -1480,13 +1493,43 @@ def stage_execution_from_orm(orm: StageExecutionORM) -> StageExecution:
         stage=Stage(orm.stage),
         attempt_number=orm.attempt_number,
         status=orm.status,
-        input_artifact_revision_id=orm.input_artifact_revision_id,
-        output_artifact_revision_id=orm.output_artifact_revision_id,
+        input_artifact_revision_id=ref_in,
+        output_artifact_revision_id=ref_out,
+        input_task_artifact_ref_id=ref_in,
+        output_task_artifact_ref_id=ref_out,
         error_type=orm.error_type,
         error_message=orm.error_message,
         duration_ms=orm.duration_ms,
         started_at=orm.started_at,
         finished_at=orm.finished_at,
+    )
+
+
+def task_artifact_ref_to_orm(ref: TaskArtifactRef) -> TaskArtifactRefORM:
+    """Converts a domain TaskArtifactRef to a TaskArtifactRefORM record."""
+    return TaskArtifactRefORM(
+        task_artifact_ref_id=ref.task_artifact_ref_id,
+        task_id=ref.task_id,
+        stage=ref.stage.value if hasattr(ref.stage, "value") else str(ref.stage),
+        artifact_type=ref.artifact_type.value if hasattr(ref.artifact_type, "value") else str(ref.artifact_type),
+        artifact_id=ref.artifact_id,
+        artifact_version=ref.artifact_version,
+        metadata_json=ref.metadata_json,
+        created_at=ref.created_at,
+    )
+
+
+def task_artifact_ref_from_orm(orm: TaskArtifactRefORM) -> TaskArtifactRef:
+    """Reconstructs a domain TaskArtifactRef from a TaskArtifactRefORM record."""
+    return TaskArtifactRef(
+        task_artifact_ref_id=orm.task_artifact_ref_id,
+        task_id=orm.task_id,
+        stage=Stage(orm.stage),
+        artifact_type=ArtifactType(orm.artifact_type),
+        artifact_id=orm.artifact_id,
+        artifact_version=orm.artifact_version,
+        created_at=orm.created_at,
+        metadata_json=orm.metadata_json or {},
     )
 
 

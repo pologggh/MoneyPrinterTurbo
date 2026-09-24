@@ -28,6 +28,8 @@ class WorkflowJob(BaseModel):
     heartbeat_at: datetime | None = None
     input_artifact_revision_id: str | None = None
     output_artifact_revision_id: str | None = None
+    input_task_artifact_ref_id: str | None = None
+    output_task_artifact_ref_id: str | None = None
     error_type: str | None = None
     error_message: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
@@ -44,9 +46,11 @@ class WorkflowJob(BaseModel):
         attempt_number: int = 1,
         max_attempts: int = 3,
         input_artifact_revision_id: str | None = None,
+        input_task_artifact_ref_id: str | None = None,
         now: datetime | None = None,
     ) -> WorkflowJob:
         ts = now or datetime.now(UTC)
+        ref_id = input_task_artifact_ref_id or input_artifact_revision_id
         return cls(
             job_id=job_id or uuid4().hex,
             task_id=task_id,
@@ -56,7 +60,8 @@ class WorkflowJob(BaseModel):
             attempt_number=attempt_number,
             max_attempts=max_attempts,
             available_at=ts,
-            input_artifact_revision_id=input_artifact_revision_id,
+            input_artifact_revision_id=ref_id,
+            input_task_artifact_ref_id=ref_id,
             created_at=ts,
         )
 
@@ -118,12 +123,15 @@ class WorkflowJob(BaseModel):
     def mark_succeeded(
         self,
         output_artifact_revision_id: str | None = None,
+        output_task_artifact_ref_id: str | None = None,
         now: datetime | None = None,
     ) -> None:
         """Marks the job as successfully completed."""
         ts = now or datetime.now(UTC)
         self.status = JobStatus.SUCCEEDED
-        self.output_artifact_revision_id = output_artifact_revision_id
+        ref_id = output_task_artifact_ref_id or output_artifact_revision_id
+        self.output_artifact_revision_id = ref_id
+        self.output_task_artifact_ref_id = ref_id
         self.finished_at = ts
         self.lease_expires_at = None
 

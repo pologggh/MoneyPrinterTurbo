@@ -17,6 +17,7 @@ from app.domain.workflow_state import (
 from app.persistence.repositories import (
     KnowledgeVideoTaskRepository,
     StageExecutionRepository,
+    TaskArtifactRepository,
     WorkflowJobRepository,
 )
 
@@ -33,6 +34,7 @@ class KnowledgeVideoWorkflow:
         self.task_repo = KnowledgeVideoTaskRepository(session)
         self.job_repo = WorkflowJobRepository(session)
         self.exec_repo = StageExecutionRepository(session)
+        self.artifact_repo = TaskArtifactRepository(session)
 
     def on_stage_completed(
         self,
@@ -83,6 +85,7 @@ class KnowledgeVideoWorkflow:
             idempotency_key=idempotency_key,
             attempt_number=1,
             input_artifact_revision_id=completed_job.output_artifact_revision_id,
+            input_task_artifact_ref_id=completed_job.output_task_artifact_ref_id,
             now=ts,
         )
         return self.job_repo.create_job(next_job)
@@ -149,6 +152,7 @@ class KnowledgeVideoWorkflow:
                 f"Task '{task.task_id}' cannot be approved: status is '{task.task_status.value}', expected WAITING_USER."
             )
 
+        prior_stage = task.current_stage
         next_stage = get_next_stage(task.current_stage)
         if next_stage is None:
             task.transition_to(TaskStatus.COMPLETED, now=ts)
@@ -159,12 +163,16 @@ class KnowledgeVideoWorkflow:
         task.transition_to(TaskStatus.RUNNING, now=ts)
         self.task_repo.save_task(task)
 
+        latest_ref = self.artifact_repo.get_latest_artifact_ref(task.task_id, stage=prior_stage)
+        input_ref_id = latest_ref.task_artifact_ref_id if latest_ref else None
+
         idempotency_key = f"idemp_{task.task_id}_{next_stage.value.lower()}_1"
         next_job = WorkflowJob.create(
             task_id=task.task_id,
             stage=next_stage,
             idempotency_key=idempotency_key,
             attempt_number=1,
+            input_task_artifact_ref_id=input_ref_id,
             now=ts,
         )
         return self.job_repo.create_job(next_job)

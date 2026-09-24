@@ -1053,6 +1053,16 @@ class WorkflowJobORM(Base):
     heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     input_artifact_revision_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     output_artifact_revision_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    input_task_artifact_ref_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("task_artifact_refs.task_artifact_ref_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    output_task_artifact_ref_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("task_artifact_refs.task_artifact_ref_id", ondelete="SET NULL"),
+        nullable=True,
+    )
     error_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -1087,6 +1097,16 @@ class StageExecutionORM(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     input_artifact_revision_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     output_artifact_revision_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    input_task_artifact_ref_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("task_artifact_refs.task_artifact_ref_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    output_task_artifact_ref_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("task_artifact_refs.task_artifact_ref_id", ondelete="SET NULL"),
+        nullable=True,
+    )
     error_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     duration_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -1097,6 +1117,30 @@ class StageExecutionORM(Base):
         Index("ix_stage_exec_task_id", "task_id"),
         Index("ix_stage_exec_job_id", "job_id"),
         Index("ix_stage_exec_stage", "stage"),
+    )
+
+
+class TaskArtifactRefORM(Base):
+    __tablename__ = "task_artifact_refs"
+
+    task_artifact_ref_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    task_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("knowledge_video_tasks.task_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    stage: Mapped[str] = mapped_column(String(32), nullable=False)
+    artifact_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    artifact_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    artifact_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    metadata_json: Mapped[dict] = mapped_column(EvidenceType, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        Index("ix_task_artifact_refs_task_id", "task_id"),
+        Index("ix_task_artifact_refs_stage", "stage"),
+        Index("ix_task_artifact_refs_artifact_type", "artifact_type"),
+        Index("ix_task_artifact_refs_created_at", "created_at"),
     )
 
 
