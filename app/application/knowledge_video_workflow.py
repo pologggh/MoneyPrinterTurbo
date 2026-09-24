@@ -78,7 +78,12 @@ class KnowledgeVideoWorkflow:
         self.task_repo.save_task(task)
 
         # 4. Generate next persistent WorkflowJob
-        idempotency_key = f"idemp_{task.task_id}_{next_stage.value.lower()}_1"
+        seq = 1
+        idempotency_key = f"idemp_{task.task_id}_{next_stage.value.lower()}_{seq}"
+        while self.job_repo.get_job_by_idempotency_key(idempotency_key) is not None:
+            seq += 1
+            idempotency_key = f"idemp_{task.task_id}_{next_stage.value.lower()}_{seq}"
+
         next_job = WorkflowJob.create(
             task_id=task.task_id,
             stage=next_stage,
@@ -166,7 +171,12 @@ class KnowledgeVideoWorkflow:
         latest_ref = self.artifact_repo.get_latest_artifact_ref(task.task_id, stage=prior_stage)
         input_ref_id = latest_ref.task_artifact_ref_id if latest_ref else None
 
-        idempotency_key = f"idemp_{task.task_id}_{next_stage.value.lower()}_1"
+        seq = 1
+        idempotency_key = f"idemp_{task.task_id}_{next_stage.value.lower()}_{seq}"
+        while self.job_repo.get_job_by_idempotency_key(idempotency_key) is not None:
+            seq += 1
+            idempotency_key = f"idemp_{task.task_id}_{next_stage.value.lower()}_{seq}"
+
         next_job = WorkflowJob.create(
             task_id=task.task_id,
             stage=next_stage,

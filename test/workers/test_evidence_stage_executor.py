@@ -87,14 +87,14 @@ def test_production_registry_contains_no_fake_executors():
         assert not executor.__class__.__name__.startswith(("Mock", "Fake", "Dummy"))
 
 
-def test_unimplemented_knowledge_plan_remains_unsupported():
-    """Verify that KNOWLEDGE_PLAN and subsequent stages remain unregistered in Stage E3."""
+def test_unimplemented_stages_remain_unsupported():
+    """Verify that SCRIPT and subsequent stages remain unregistered in Stage K1."""
     registry = get_default_executor_registry()
     for stage in Stage:
-        if stage != Stage.EVIDENCE:
+        if stage not in (Stage.EVIDENCE, Stage.KNOWLEDGE_PLAN):
             assert not registry.has_executor(stage)
             assert registry.get_executor(stage) is None
-    assert registry.list_supported_stages() == {Stage.EVIDENCE}
+    assert registry.list_supported_stages() == {Stage.EVIDENCE, Stage.KNOWLEDGE_PLAN}
 
 
 # =============================================================================
@@ -197,10 +197,12 @@ def test_mandatory_e2e_real_text_source_success(session_factory):
         src_doc_id = doc.source_document_id
         session.commit()
 
-    # 2. Run StageWorker with production registry
+    # 2. Run StageWorker with EVIDENCE executor
+    evidence_registry = StageExecutorRegistry()
+    evidence_registry.register(Stage.EVIDENCE, EvidenceStageExecutor(session_factory=session_factory))
     worker = StageWorker(
         session_factory=session_factory,
-        registry=get_default_executor_registry(session_factory=session_factory),
+        registry=evidence_registry,
         worker_id="test-e2e-worker",
     )
 

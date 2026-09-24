@@ -964,7 +964,7 @@ def test_knowledge_plan_job_remains_unsupported_and_queued(session_factory):
         extracted_text="Deep learning Transformer architectures use self-attention to model context.",
     )
 
-    registry = get_default_executor_registry(session_factory=session_factory)
+    registry = StageExecutorRegistry()
     executor = EvidenceStageExecutor(
         session_factory=session_factory,
         search_provider=mock_search,

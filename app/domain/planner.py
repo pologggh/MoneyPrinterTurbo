@@ -90,6 +90,10 @@ class PlannerInput(BaseModel):
         default=False,
         description="If True, factual content (KNOWLEDGE) strictly requires evidence references",
     )
+    global_retrieval_snapshot_id: str | None = Field(
+        default=None,
+        description="Optional reference to the retrieval snapshot used during evidence collection",
+    )
 
 
 class PlannerBeatProposal(BaseModel):
@@ -400,6 +404,7 @@ class ContentPlanner:
             topic=proposal_output.title or input_data.title or input_data.topic,
             overall_target_duration=input_data.target_video_duration,
             beats=tuple(domain_beats),
+            global_retrieval_snapshot_id=input_data.global_retrieval_snapshot_id,
         )
 
         return new_plan

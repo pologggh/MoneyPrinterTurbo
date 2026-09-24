@@ -45,12 +45,15 @@ def get_default_executor_registry(
     """
     Returns default production executor registry.
 
-    In Stage E3:
+    In Stage K1:
     - Stage.EVIDENCE is registered with production EvidenceStageExecutor.
-    - Subsequent stages (Stage.KNOWLEDGE_PLAN, etc.) remain unregistered and unsupported.
+    - Stage.KNOWLEDGE_PLAN is registered with production KnowledgePlanStageExecutor.
+    - Subsequent stages (Stage.SCRIPT, Stage.STORYBOARD, etc.) remain unregistered and unsupported.
     """
     from app.application.evidence_stage_executor import EvidenceStageExecutor
+    from app.application.knowledge_plan_stage_executor import KnowledgePlanStageExecutor
 
     registry = StageExecutorRegistry()
     registry.register(Stage.EVIDENCE, EvidenceStageExecutor(session_factory=session_factory))
+    registry.register(Stage.KNOWLEDGE_PLAN, KnowledgePlanStageExecutor(session_factory=session_factory))
     return registry
