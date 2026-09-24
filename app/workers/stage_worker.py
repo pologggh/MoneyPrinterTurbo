@@ -106,7 +106,11 @@ class StageWorker:
         recovery_interval_seconds: float = 60.0,
     ) -> None:
         self.session_factory = session_factory
-        self.registry = registry if registry is not None else get_default_executor_registry()
+        self.registry = (
+            registry
+            if registry is not None
+            else get_default_executor_registry(session_factory=session_factory)
+        )
         self.worker_id = worker_id or f"stage-worker-{uuid4().hex[:8]}"
         self.poll_interval_seconds = poll_interval_seconds
         self.lease_duration_seconds = lease_duration_seconds

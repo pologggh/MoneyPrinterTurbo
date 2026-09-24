@@ -241,12 +241,12 @@ def test_stable_evidence_item_reuse_across_queries(session_factory):
         assert len(all_items) == 1
 
 
-def test_evidence_stage_executor_is_not_registered():
-    """Verify strictly that Stage.EVIDENCE executor is NOT registered in production registry.
+def test_evidence_stage_executor_is_registered_in_stage_e3():
+    """Verify that Stage.EVIDENCE executor is registered in Stage E3 production registry, while subsequent stages remain unregistered."""
+    from app.application.evidence_stage_executor import EvidenceStageExecutor
 
-    The EVIDENCE stage in StageWorker remains safely QUEUED / unexecuted until later stages.
-    No fake or mock executors should ever be installed in production code.
-    """
     registry = get_default_executor_registry()
     executor = registry.get_executor(Stage.EVIDENCE)
-    assert executor is None, "EvidenceStageExecutor must NOT be registered in Stage E2!"
+    assert executor is not None
+    assert isinstance(executor, EvidenceStageExecutor)
+    assert registry.get_executor(Stage.KNOWLEDGE_PLAN) is None

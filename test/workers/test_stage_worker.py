@@ -93,11 +93,11 @@ def session_factory():
     return SessionLocal
 
 
-def test_unsupported_stage_remains_queued_with_zero_executors(session_factory):
+def test_unsupported_stage_remains_queued_in_production_registry(session_factory):
     """
     CRITICAL INVARIANT:
-    Newly created tasks queue an initial EVIDENCE job.
-    Since default production registry has 0 business executors, the job MUST
+    In Stage E3, KNOWLEDGE_PLAN and subsequent stages are not yet implemented.
+    Since default production registry does not register them, an unsupported job MUST
     remain QUEUED, safe, unacquired, and unfailed.
     """
     task_id = f"task_{uuid4().hex[:8]}"
@@ -111,19 +111,20 @@ def test_unsupported_stage_remains_queued_with_zero_executors(session_factory):
             target_duration=90.0,
             workflow_policy=WorkflowPolicyType.AUTO,
         )
+        task.advance_stage(Stage.KNOWLEDGE_PLAN)
         job = WorkflowJob.create(
             task_id=task_id,
-            stage=Stage.EVIDENCE,
-            idempotency_key=f"idemp_{task_id}_evidence_1",
+            stage=Stage.KNOWLEDGE_PLAN,
+            idempotency_key=f"idemp_{task_id}_knowledge_plan_1",
         )
         task_repo.save_task(task)
         job_repo.create_job(job)
         session.commit()
 
-    # Create worker with default production registry (0 executors)
+    # Create worker with default production registry
     worker = StageWorker(
         session_factory=session_factory,
-        registry=get_default_executor_registry(),
+        registry=get_default_executor_registry(session_factory=session_factory),
         worker_id="prod-worker-1",
     )
 
@@ -142,7 +143,7 @@ def test_unsupported_stage_remains_queued_with_zero_executors(session_factory):
         executions = exec_repo.list_executions_for_task(task_id)
 
         assert current_task.task_status == TaskStatus.CREATED
-        assert current_task.current_stage == Stage.EVIDENCE
+        assert current_task.current_stage == Stage.KNOWLEDGE_PLAN
         assert current_job.status == JobStatus.QUEUED
         assert current_job.lease_owner is None
         assert current_job.lease_expires_at is None

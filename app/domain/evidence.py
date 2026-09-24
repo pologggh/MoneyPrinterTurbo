@@ -618,3 +618,61 @@ class RetrievalSnapshot(BaseModel):
             created_at=ts,
         )
 
+
+class EvidenceSufficiencyResult(BaseModel):
+    """Result of evaluating evidence availability and provenance sufficiency."""
+    model_config = ConfigDict(frozen=True)
+
+    is_sufficient: bool
+    reason_code: str | None = None  # NO_SOURCES, NO_PROCESSABLE_SOURCES, NO_RETRIEVAL_RESULTS, BROKEN_EVIDENCE_PROVENANCE
+    message: str | None = None
+    processed_source_count: int = 0
+    selected_evidence_count: int = 0
+
+
+class EvidenceAvailabilityPolicy:
+    """Deterministic policy evaluating whether a task has sufficient source-grounded evidence to continue to planning."""
+
+    def evaluate(
+        self,
+        task_source_count: int,
+        processed_source_ids: Sequence[str],
+        selected_evidence_items: Sequence[EvidenceItem],
+    ) -> EvidenceSufficiencyResult:
+        if task_source_count == 0:
+            return EvidenceSufficiencyResult(
+                is_sufficient=False,
+                reason_code="NO_SOURCES",
+                message="No evidence sources are registered for this task.",
+            )
+        if not processed_source_ids:
+            return EvidenceSufficiencyResult(
+                is_sufficient=False,
+                reason_code="NO_PROCESSABLE_SOURCES",
+                message="None of the registered sources could be parsed or processed.",
+                processed_source_count=0,
+            )
+        if not selected_evidence_items:
+            return EvidenceSufficiencyResult(
+                is_sufficient=False,
+                reason_code="NO_RETRIEVAL_RESULTS",
+                message="Retrieval over processed sources returned zero matching evidence items.",
+                processed_source_count=len(processed_source_ids),
+                selected_evidence_count=0,
+            )
+        for item in selected_evidence_items:
+            if not item.source_document_id or not item.content_hash or item.source_document_id not in processed_source_ids:
+                return EvidenceSufficiencyResult(
+                    is_sufficient=False,
+                    reason_code="BROKEN_EVIDENCE_PROVENANCE",
+                    message=f"Evidence item '{item.evidence_id}' has broken provenance or unassociated source.",
+                    processed_source_count=len(processed_source_ids),
+                    selected_evidence_count=len(selected_evidence_items),
+                )
+
+        return EvidenceSufficiencyResult(
+            is_sufficient=True,
+            processed_source_count=len(processed_source_ids),
+            selected_evidence_count=len(selected_evidence_items),
+        )
+

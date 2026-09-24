@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING
+
+from sqlalchemy.orm import Session
 
 from app.domain.workflow_state import Stage
 
@@ -12,8 +15,8 @@ class StageExecutorRegistry:
     """
     Authoritative registry mapping workflow Stages to StageExecutorProtocol implementations.
 
-    In stage U1-C, this registry holds 0 business executors in production.
-    Executors are registered explicitly by application configuration or tests.
+    In Stage E3, this registry holds the production EvidenceStageExecutor for Stage.EVIDENCE.
+    Other business executors (KNOWLEDGE_PLAN, SCRIPT, etc.) remain unregistered and unsupported.
     """
 
     def __init__(self) -> None:
@@ -36,11 +39,18 @@ class StageExecutorRegistry:
         return set(self._executors.keys())
 
 
-def get_default_executor_registry() -> StageExecutorRegistry:
+def get_default_executor_registry(
+    session_factory: Callable[[], Session] | None = None,
+) -> StageExecutorRegistry:
     """
     Returns default production executor registry.
 
-    In U1-C foundation, NO business executors are registered (empty registry).
-    Unsupported stages (including the initial EVIDENCE stage) remain safely QUEUED.
+    In Stage E3:
+    - Stage.EVIDENCE is registered with production EvidenceStageExecutor.
+    - Subsequent stages (Stage.KNOWLEDGE_PLAN, etc.) remain unregistered and unsupported.
     """
-    return StageExecutorRegistry()
+    from app.application.evidence_stage_executor import EvidenceStageExecutor
+
+    registry = StageExecutorRegistry()
+    registry.register(Stage.EVIDENCE, EvidenceStageExecutor(session_factory=session_factory))
+    return registry

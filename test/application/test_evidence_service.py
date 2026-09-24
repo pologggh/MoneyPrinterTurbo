@@ -344,14 +344,14 @@ def test_create_task_evidence_snapshot_and_artifact_ref(session_factory):
         assert art_ref.artifact_id == snapshot.evidence_snapshot_id
 
 
-def test_evidence_stage_executor_is_not_registered_in_production():
-    """Verify that Stage E1 strictly does NOT register an EVIDENCE executor in the default registry.
+def test_evidence_stage_executor_registration_in_production():
+    """Verify that Stage E3 registers EvidenceStageExecutor in default registry, while KNOWLEDGE_PLAN remains unhandled."""
+    from app.application.evidence_stage_executor import EvidenceStageExecutor
 
-    The EVIDENCE workflow job must remain safely QUEUED until later retrieval/parsing stages.
-    """
     registry = get_default_executor_registry()
-    assert not registry.has_executor(Stage.EVIDENCE)
-    assert len(registry.list_supported_stages()) == 0
+    assert registry.has_executor(Stage.EVIDENCE)
+    assert isinstance(registry.get_executor(Stage.EVIDENCE), EvidenceStageExecutor)
+    assert not registry.has_executor(Stage.KNOWLEDGE_PLAN)
 
 
 def test_batch_resolution_with_empty_list(session_factory):

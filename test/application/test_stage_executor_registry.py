@@ -20,13 +20,19 @@ class DummyStageExecutor:
         return StageExecutionResult(success=True)
 
 
-def test_default_executor_registry_has_zero_executors():
-    """Verify that default production registry has exactly 0 business executors registered."""
+def test_default_executor_registry_has_evidence_executor():
+    """Verify that default production registry has EvidenceStageExecutor for EVIDENCE and 0 other executors."""
+    from app.application.evidence_stage_executor import EvidenceStageExecutor
+
     registry = get_default_executor_registry()
-    assert len(registry.list_supported_stages()) == 0
+    assert len(registry.list_supported_stages()) == 1
+    assert registry.has_executor(Stage.EVIDENCE)
+    assert isinstance(registry.get_executor(Stage.EVIDENCE), EvidenceStageExecutor)
+
     for stage in Stage:
-        assert not registry.has_executor(stage)
-        assert registry.get_executor(stage) is None
+        if stage != Stage.EVIDENCE:
+            assert not registry.has_executor(stage)
+            assert registry.get_executor(stage) is None
 
 
 def test_stage_executor_registry_registration_and_lookup():
