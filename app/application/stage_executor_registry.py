@@ -78,3 +78,73 @@ def get_default_executor_registry(
     registry.register(Stage.QUALITY_REVIEW, QualityReviewStageExecutor(session_factory=session_factory))
     registry.register(Stage.DELIVERY, DeliveryStageExecutor(session_factory=session_factory))
     return registry
+
+
+def get_offline_e2e_executor_registry(
+    session_factory: Callable[[], Session] | None = None,
+) -> StageExecutorRegistry:
+    """
+    Returns an offline E2E executor registry reusing all 10 real production StageExecutors,
+    wiring existing deterministic offline adapters for LLM/evaluator-dependent stages:
+    - KNOWLEDGE_PLAN: deterministic offline planner LLM caller
+    - SCRIPT: deterministic offline script LLM caller
+    - STORYBOARD: deterministic offline storyboard LLM caller
+    - QUALITY_REVIEW: deterministic offline multimodal evaluator adapter
+    """
+    from app.application.asset_stage_executor import AssetStageExecutor
+    from app.application.audio_stage_executor import AudioStageExecutor
+    from app.application.composition_stage_executor import (
+        CompositionStageExecutor,
+    )
+    from app.application.delivery_stage_executor import DeliveryStageExecutor
+    from app.application.evidence_stage_executor import EvidenceStageExecutor
+    from app.application.knowledge_plan_stage_executor import KnowledgePlanStageExecutor
+    from app.application.production_plan_stage_executor import ProductionPlanStageExecutor
+    from app.application.quality_review_stage_executor import (
+        QualityReviewStageExecutor,
+    )
+    from app.application.script_stage_executor import ScriptStageExecutor
+    from app.application.storyboard_stage_executor import StoryboardStageExecutor
+    from app.services.benchmark.offline_adapters import (
+        DeterministicOfflineEvaluatorAdapter,
+        create_offline_e2e_planner_caller,
+        create_offline_e2e_script_caller,
+        create_offline_e2e_storyboard_caller,
+    )
+
+    registry = StageExecutorRegistry()
+    registry.register(Stage.EVIDENCE, EvidenceStageExecutor(session_factory=session_factory))
+    registry.register(
+        Stage.KNOWLEDGE_PLAN,
+        KnowledgePlanStageExecutor(
+            session_factory=session_factory,
+            llm_caller=create_offline_e2e_planner_caller(),
+        ),
+    )
+    registry.register(
+        Stage.SCRIPT,
+        ScriptStageExecutor(
+            session_factory=session_factory,
+            llm_caller=create_offline_e2e_script_caller(),
+        ),
+    )
+    registry.register(
+        Stage.STORYBOARD,
+        StoryboardStageExecutor(
+            session_factory=session_factory,
+            llm_caller=create_offline_e2e_storyboard_caller(),
+        ),
+    )
+    registry.register(Stage.PRODUCTION_PLAN, ProductionPlanStageExecutor(session_factory=session_factory))
+    registry.register(Stage.ASSET, AssetStageExecutor(session_factory=session_factory))
+    registry.register(Stage.AUDIO, AudioStageExecutor(session_factory=session_factory))
+    registry.register(Stage.COMPOSITION, CompositionStageExecutor(session_factory=session_factory))
+    registry.register(
+        Stage.QUALITY_REVIEW,
+        QualityReviewStageExecutor(
+            session_factory=session_factory,
+            evaluator_adapter=DeterministicOfflineEvaluatorAdapter(),
+        ),
+    )
+    registry.register(Stage.DELIVERY, DeliveryStageExecutor(session_factory=session_factory))
+    return registry

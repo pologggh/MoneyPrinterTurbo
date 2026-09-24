@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import signal
 import sys
 import threading
@@ -34,6 +35,13 @@ from app.persistence.repositories import (
     WorkflowJobRepository,
 )
 from app.persistence.session import create_db_engine
+
+
+def is_offline_e2e_mode() -> bool:
+    """Returns True if offline E2E execution mode is opted into via MPT_OFFLINE_E2E."""
+    val = os.getenv("MPT_OFFLINE_E2E", "").strip().lower()
+    return val in ("1", "true", "yes", "on")
+
 
 
 class _HeartbeatRunner:
@@ -106,11 +114,13 @@ class StageWorker:
         recovery_interval_seconds: float = 60.0,
     ) -> None:
         self.session_factory = session_factory
-        self.registry = (
-            registry
-            if registry is not None
-            else get_default_executor_registry(session_factory=session_factory)
-        )
+        if registry is not None:
+            self.registry = registry
+        elif is_offline_e2e_mode():
+            from app.application.stage_executor_registry import get_offline_e2e_executor_registry
+            self.registry = get_offline_e2e_executor_registry(session_factory=session_factory)
+        else:
+            self.registry = get_default_executor_registry(session_factory=session_factory)
         self.worker_id = worker_id or f"stage-worker-{uuid4().hex[:8]}"
         self.poll_interval_seconds = poll_interval_seconds
         self.lease_duration_seconds = lease_duration_seconds
@@ -339,6 +349,8 @@ class StageWorker:
 
     def run_forever(self) -> None:
         """Continuous polling execution loop with graceful shutdown."""
+        mode_label = "OFFLINE_E2E" if is_offline_e2e_mode() else "PRODUCTION"
+        logger.info(f"Knowledge Video Worker mode: {mode_label}")
         logger.info(
             f"StageWorker '{self.worker_id}' started. Supported stages: {self.registry.list_supported_stages()}"
         )
@@ -372,7 +384,13 @@ def main() -> None:
     run_database_migrations()
     session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
-    registry = get_default_executor_registry(session_factory=session_factory)
+    if is_offline_e2e_mode():
+        logger.info("Knowledge Video Worker mode: OFFLINE_E2E")
+        from app.application.stage_executor_registry import get_offline_e2e_executor_registry
+        registry = get_offline_e2e_executor_registry(session_factory=session_factory)
+    else:
+        logger.info("Knowledge Video Worker mode: PRODUCTION")
+        registry = get_default_executor_registry(session_factory=session_factory)
     worker = StageWorker(
         session_factory=session_factory,
         registry=registry,

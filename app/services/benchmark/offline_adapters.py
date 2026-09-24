@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
+import re
 from typing import Any
 from uuid import uuid4
 
@@ -60,6 +62,93 @@ def create_deterministic_offline_planner_llm(topic: str, target_duration: float,
                 },
             ],
         })
+    return _caller
+
+
+def create_offline_e2e_planner_caller() -> Callable[[str], str]:
+    """Creates a deterministic offline planner LLM caller by extracting prompt metadata."""
+    def _caller(prompt: str) -> str:
+        topic = "Knowledge Video"
+        m_topic = re.search(r"Topic:\s*([^\n]+)", prompt)
+        if m_topic:
+            topic = m_topic.group(1).strip()
+
+        dur = 30.0
+        m_dur = re.search(r"Target Video Duration:\s*([0-9.]+)", prompt)
+        if m_dur:
+            dur = float(m_dur.group(1))
+
+        evidence_id = "ev_1"
+        m_ev = re.search(r"\[([a-zA-Z0-9_-]+)\]", prompt)
+        if m_ev:
+            evidence_id = m_ev.group(1).strip()
+
+        base_caller = create_deterministic_offline_planner_llm(topic, dur, evidence_id)
+        return base_caller(prompt)
+
+    return _caller
+
+
+def create_offline_e2e_script_caller() -> Callable[[str], str]:
+    """Creates a deterministic offline script LLM caller matching input beats."""
+    def _caller(prompt: str) -> str:
+        beat_blocks = re.split(r"-\s*Beat\s*\d+:", prompt)[1:]
+        segments: list[dict[str, Any]] = []
+        for idx, block in enumerate(beat_blocks, start=1):
+            m_id = re.search(r"content_beat_id:\s*[\"']?([^\n\"']+)", block)
+            beat_id = m_id.group(1).strip() if m_id else f"beat_{idx}"
+            m_dur = re.search(r"target_duration:\s*([0-9.]+)", block)
+            dur = float(m_dur.group(1)) if m_dur else 10.0
+            ev_refs = re.findall(r"\[([a-zA-Z0-9_-]+)\]", block)
+            segments.append({
+                "content_beat_id": beat_id,
+                "order": idx,
+                "narration_text": f"这是关于第 {idx} 部分的清晰讲解，基于事实与数据阐述核心知识点。",
+                "target_duration": dur,
+                "evidence_refs": ev_refs,
+            })
+        return json.dumps({"segments": segments})
+
+    return _caller
+
+
+def create_offline_e2e_storyboard_caller() -> Callable[[str], str]:
+    """Creates a deterministic offline storyboard LLM caller generating AI_IMAGE shots."""
+    def _caller(prompt: str) -> str:
+        beat_ref = "beat-1"
+        m_ref = re.search(r'"beat_ref":\s*"([^"]+)"', prompt) or re.search(r"Beat Order:\s*(\d+)", prompt)
+        if m_ref:
+            beat_ref = f"beat-{m_ref.group(1)}" if m_ref.group(0).startswith("Beat Order") else m_ref.group(1)
+
+        target_dur = 10.0
+        m_dur = re.search(r"Target Duration:\s*([0-9.]+)", prompt)
+        if m_dur:
+            target_dur = float(m_dur.group(1))
+
+        ev_refs: list[str] = []
+        m_ev = re.search(r"Allowed Evidence IDs:\s*\[([^\]]+)\]", prompt)
+        if m_ev:
+            ev_refs = [x.strip().strip("\"'") for x in m_ev.group(1).split(",") if x.strip()]
+
+        narration = "这是关于核心知识点的清晰视频讲解。"
+        m_narr = re.search(r'## Authoritative Script Narration:\s*"([^"]+)"', prompt)
+        if m_narr:
+            narration = m_narr.group(1).strip()
+
+        shot = {
+            "planner_ref": "s1",
+            "local_order": 1,
+            "narration": narration,
+            "target_duration": target_dur,
+            "visual_goal": "清晰展示核心知识概念",
+            "visual_type": "AI_IMAGE",
+            "scene_description": "清晰整洁的教育知识视觉呈现",
+            "generation_prompt": "Educational knowledge diagram, clean layout, high resolution",
+            "camera_movement": "static",
+            "evidence_refs": ev_refs,
+        }
+        return json.dumps({"beat_ref": beat_ref, "shots": [shot]})
+
     return _caller
 
 
