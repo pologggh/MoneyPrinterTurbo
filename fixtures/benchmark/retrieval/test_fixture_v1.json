@@ -1,0 +1,73 @@
+{
+  "benchmark_type": "TEST_FIXTURE_ONLY",
+  "note": "TEST_FIXTURE_ONLY: For automated unit testing of retrieval benchmark harness. Do not claim as production golden dataset.",
+  "dataset_name": "retrieval_test_fixture_v1",
+  "version": "1.0.0",
+  "description": "Minimal deterministic 5-chunk 3-query test fixture for verifying IR metrics and multi-mode retrieval benchmark execution.",
+  "corpus_id": "test_fixture_corpus",
+  "corpus_chunks": [
+    {
+      "chunk_id": "chunk_tcp_01",
+      "text": "TCP 三次握手建立连接过程：客户端发送 SYN 包请求连接，服务端响应 SYN+ACK 确认包，客户端最后发送 ACK 包完成握手。"
+    },
+    {
+      "chunk_id": "chunk_tcp_02",
+      "text": "TCP 协议通过序列号（Sequence Number）和确认号（Acknowledgment Number）保证可靠数据传输与按序组装。"
+    },
+    {
+      "chunk_id": "chunk_attn_01",
+      "text": "Transformer 模型的多头自注意力机制允许网络联合关注不同位置的不同表示子空间信息。"
+    },
+    {
+      "chunk_id": "chunk_rag_01",
+      "text": "检索增强生成（RAG）将外部权威知识库与大语言模型结合，通过召回相关文档上下文来减少幻觉。"
+    },
+    {
+      "chunk_id": "chunk_rag_02",
+      "text": "RAG 系统的检索模块可以采用词法 BM25、语义向量检索或两者的混合互逆秩融合（RRF）。"
+    }
+  ],
+  "queries": [
+    {
+      "query_id": "q_bm25_tcp",
+      "query": "TCP 三次握手 SYN ACK 过程",
+      "relevance": {
+        "chunk_tcp_01": 3,
+        "chunk_tcp_02": 1
+      },
+      "hard_negative_chunk_ids": [
+        "chunk_attn_01"
+      ],
+      "difficulty": "EASY",
+      "category": "FACT",
+      "notes": "Exact keyword overlap favoring lexical BM25 retrieval."
+    },
+    {
+      "query_id": "q_dense_semantic",
+      "query": "深度神经网络如何跨词元捕获上下文关联？",
+      "relevance": {
+        "chunk_attn_01": 3
+      },
+      "hard_negative_chunk_ids": [
+        "chunk_tcp_01"
+      ],
+      "difficulty": "MEDIUM",
+      "category": "CONCEPT",
+      "notes": "Paraphrase query favoring dense semantic representation."
+    },
+    {
+      "query_id": "q_multi_rag",
+      "query": "如何构建减少大模型幻觉并结合混合搜索的知识检索系统？",
+      "relevance": {
+        "chunk_rag_01": 3,
+        "chunk_rag_02": 2
+      },
+      "hard_negative_chunk_ids": [
+        "chunk_tcp_02"
+      ],
+      "difficulty": "HARD",
+      "category": "MULTI_EVIDENCE",
+      "notes": "Multi-relevant query requiring two chunks with distinct grades."
+    }
+  ]
+}
