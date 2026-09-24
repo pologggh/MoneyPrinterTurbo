@@ -36,6 +36,14 @@ async def application_lifespan(_: FastAPI):
             "API key authentication is misconfigured: app.api_key must be a string"
         )
 
+    # 确保数据库就绪并执行全部迁移，若失败则显式阻止 API 启动服务
+    from app.persistence.database_lifecycle import init_database_on_startup
+
+    db_initialized = init_database_on_startup()
+    if not db_initialized:
+        logger.critical("Database initialization failed; halting API application startup.")
+        raise RuntimeError("Database initialization or migration failed. Halting application startup.")
+
     # 跨平台发布由当前进程线程池执行，不会在服务重启后恢复。启动时把 Redis
     # 中确认已失去执行进程的活动状态收敛为失败，避免任务永久无法删除。
     from app.services import task as task_service

@@ -10,9 +10,15 @@ from app.models import const
 from app.models.schema import VideoParams
 from app.services import state as sm
 from app.services import task as tm
+from app.services.storyboard_background_tasks import (
+    run_asset_route_plan_task,
+    run_storyboard_assembly_task,
+)
 
 FUNC_MAP = {
     "start": tm.start,
+    "run_storyboard_assembly_task": run_storyboard_assembly_task,
+    "run_asset_route_plan_task": run_asset_route_plan_task,
     # 'start_test': tm.start_test
 }
 

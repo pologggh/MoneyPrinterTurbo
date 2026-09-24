@@ -32,9 +32,10 @@ venv/
 CLAUDE.md
 debug/
 debug_*.py
-test_*.py
-!test/services/test_*.py
-!test/test_*.py
+/test_*.py
+**/__pycache__/
+*.py[cod]
+/test/.pytest-tmp-*/
 streamlit.log
 .coverage
 coverage.xml

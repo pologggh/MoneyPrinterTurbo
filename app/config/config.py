@@ -582,6 +582,7 @@ app["redis_host"] = os.getenv(
     "MPT_APP_REDIS_HOST",
     os.getenv("REDIS_HOST", app.get("redis_host", "localhost")),
 )
+app.setdefault("max_asset_download_bytes", 500 * 1024 * 1024)
 
 ffmpeg_path = app.get("ffmpeg_path", "")
 if ffmpeg_path and os.path.isfile(ffmpeg_path):

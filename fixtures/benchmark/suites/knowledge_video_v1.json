@@ -1,0 +1,296 @@
+{
+  "suite_key": "knowledge-video-v1",
+  "suite_version": "v1",
+  "title": "Knowledge Video Benchmark Suite v1",
+  "description": "Initial 12-case benchmark suite covering foundational CS, AI, physics, and biology topics.",
+  "cases": [
+    {
+      "case_key": "transformer-attention",
+      "case_version": "v1",
+      "title": "Transformer Attention Mechanism",
+      "topic": "Transformer Attention Mechanism",
+      "target_duration": 8.0,
+      "user_instruction": "Explain query, key, value projections and scaled dot-product attention clearly.",
+      "tags": ["ai", "nlp", "deep-learning"],
+      "knowledge_fixture": {
+        "fixture_id": "fix-transformer-attention",
+        "fixture_version": "v1.0",
+        "file_path": "fixtures/benchmark/knowledge/transformer_attention.md",
+        "content_sha256": "2d7291fa9a676a1c2f93c04af54239a6f02a2dcb3f15cc7d1aed15e7215340ca"
+      },
+      "expected_constraints": {
+        "min_beats": 2,
+        "max_beats": 6,
+        "required_beat_types": ["HOOK", "KNOWLEDGE"],
+        "require_evidence_for_knowledge_beats": true,
+        "target_duration_tolerance": 2.0,
+        "minimum_shots": 2,
+        "maximum_shots": 8
+      }
+    },
+    {
+      "case_key": "rag-overview",
+      "case_version": "v1",
+      "title": "Retrieval-Augmented Generation",
+      "topic": "Retrieval-Augmented Generation (RAG)",
+      "target_duration": 8.0,
+      "user_instruction": "Highlight vector database lookup and grounding LLM answers to reduce hallucinations.",
+      "tags": ["ai", "rag", "llm"],
+      "knowledge_fixture": {
+        "fixture_id": "fix-rag-overview",
+        "fixture_version": "v1.0",
+        "file_path": "fixtures/benchmark/knowledge/rag_overview.md",
+        "content_sha256": "0666b96669cf6ff41fe1ce2a7f4ae081c3f8a3a7406191bed17b41804a10e62d"
+      },
+      "expected_constraints": {
+        "min_beats": 2,
+        "max_beats": 6,
+        "required_beat_types": ["HOOK", "KNOWLEDGE"],
+        "require_evidence_for_knowledge_beats": true,
+        "target_duration_tolerance": 2.0,
+        "minimum_shots": 2,
+        "maximum_shots": 8
+      }
+    },
+    {
+      "case_key": "tcp-three-way-handshake",
+      "case_version": "v1",
+      "title": "TCP Three-Way Handshake",
+      "topic": "TCP Three-Way Handshake",
+      "target_duration": 8.0,
+      "user_instruction": "Describe SYN, SYN-ACK, and ACK packet exchange clearly.",
+      "tags": ["networking", "systems", "tcp"],
+      "knowledge_fixture": {
+        "fixture_id": "fix-tcp-three-way-handshake",
+        "fixture_version": "v1.0",
+        "file_path": "fixtures/benchmark/knowledge/tcp_three_way_handshake.md",
+        "content_sha256": "7a38c20883bd37c49b8c326bcd7603e2e4d8aa1fe4076a2725025fed1a94e4ba"
+      },
+      "expected_constraints": {
+        "min_beats": 2,
+        "max_beats": 6,
+        "required_beat_types": ["HOOK", "KNOWLEDGE"],
+        "require_evidence_for_knowledge_beats": true,
+        "target_duration_tolerance": 2.0,
+        "minimum_shots": 2,
+        "maximum_shots": 8
+      }
+    },
+    {
+      "case_key": "dns-resolution",
+      "case_version": "v1",
+      "title": "DNS Resolution Hierarchy",
+      "topic": "DNS Resolution Process",
+      "target_duration": 8.0,
+      "user_instruction": "Explain recursive resolver querying root, TLD, and authoritative nameservers.",
+      "tags": ["networking", "dns", "internet"],
+      "knowledge_fixture": {
+        "fixture_id": "fix-dns-resolution",
+        "fixture_version": "v1.0",
+        "file_path": "fixtures/benchmark/knowledge/dns_resolution.md",
+        "content_sha256": "95811bd3243dee33a12282d787fa6b3b577db051495d154755ed7991a109912b"
+      },
+      "expected_constraints": {
+        "min_beats": 2,
+        "max_beats": 6,
+        "required_beat_types": ["HOOK", "KNOWLEDGE"],
+        "require_evidence_for_knowledge_beats": true,
+        "target_duration_tolerance": 2.0,
+        "minimum_shots": 2,
+        "maximum_shots": 8
+      }
+    },
+    {
+      "case_key": "public-key-encryption",
+      "case_version": "v1",
+      "title": "Public-Key Cryptography",
+      "topic": "Public-Key Cryptography",
+      "target_duration": 8.0,
+      "user_instruction": "Explain the relationship between asymmetric public and private keys.",
+      "tags": ["security", "cryptography", "math"],
+      "knowledge_fixture": {
+        "fixture_id": "fix-public-key-encryption",
+        "fixture_version": "v1.0",
+        "file_path": "fixtures/benchmark/knowledge/public_key_encryption.md",
+        "content_sha256": "0db251f7bc04067c6cd0e8857639cd0aa3d5674459555a62dbe77e28c7da2aa0"
+      },
+      "expected_constraints": {
+        "min_beats": 2,
+        "max_beats": 6,
+        "required_beat_types": ["HOOK", "KNOWLEDGE"],
+        "require_evidence_for_knowledge_beats": true,
+        "target_duration_tolerance": 2.0,
+        "minimum_shots": 2,
+        "maximum_shots": 8
+      }
+    },
+    {
+      "case_key": "gradient-descent",
+      "case_version": "v1",
+      "title": "Gradient Descent Optimization",
+      "topic": "Gradient Descent Optimization",
+      "target_duration": 8.0,
+      "user_instruction": "Show how parameter updates follow the negative gradient of the loss surface.",
+      "tags": ["machine-learning", "optimization", "math"],
+      "knowledge_fixture": {
+        "fixture_id": "fix-gradient-descent",
+        "fixture_version": "v1.0",
+        "file_path": "fixtures/benchmark/knowledge/gradient_descent.md",
+        "content_sha256": "40c2f3c4b960c46fbb12e1984a6a4fa9bd07cb4b40ff424454d1cd67814ce267"
+      },
+      "expected_constraints": {
+        "min_beats": 2,
+        "max_beats": 6,
+        "required_beat_types": ["HOOK", "KNOWLEDGE"],
+        "require_evidence_for_knowledge_beats": true,
+        "target_duration_tolerance": 2.0,
+        "minimum_shots": 2,
+        "maximum_shots": 8
+      }
+    },
+    {
+      "case_key": "photosynthesis",
+      "case_version": "v1",
+      "title": "Photosynthesis Light and Dark Reactions",
+      "topic": "Photosynthesis",
+      "target_duration": 8.0,
+      "user_instruction": "Explain chloroplast light-dependent water splitting and Calvin cycle carbon fixation.",
+      "tags": ["biology", "science", "botany"],
+      "knowledge_fixture": {
+        "fixture_id": "fix-photosynthesis",
+        "fixture_version": "v1.0",
+        "file_path": "fixtures/benchmark/knowledge/photosynthesis.md",
+        "content_sha256": "c9d428b1dbce70822575f2566bfc4f5e1a4339b5101dfe6a343e4e408b77ee1d"
+      },
+      "expected_constraints": {
+        "min_beats": 2,
+        "max_beats": 6,
+        "required_beat_types": ["HOOK", "KNOWLEDGE"],
+        "require_evidence_for_knowledge_beats": true,
+        "target_duration_tolerance": 2.0,
+        "minimum_shots": 2,
+        "maximum_shots": 8
+      }
+    },
+    {
+      "case_key": "black-hole-formation",
+      "case_version": "v1",
+      "title": "Stellar Black Hole Formation",
+      "topic": "Black Hole Formation",
+      "target_duration": 8.0,
+      "user_instruction": "Explain massive stellar core collapse and event horizon emergence.",
+      "tags": ["astronomy", "physics", "cosmos"],
+      "knowledge_fixture": {
+        "fixture_id": "fix-black-hole-formation",
+        "fixture_version": "v1.0",
+        "file_path": "fixtures/benchmark/knowledge/black_hole_formation.md",
+        "content_sha256": "fe56e6849e9bd57f93b21728d981b04da600c98c6d8d943c8443dc8dfef6e1d8"
+      },
+      "expected_constraints": {
+        "min_beats": 2,
+        "max_beats": 6,
+        "required_beat_types": ["HOOK", "KNOWLEDGE"],
+        "require_evidence_for_knowledge_beats": true,
+        "target_duration_tolerance": 2.0,
+        "minimum_shots": 2,
+        "maximum_shots": 8
+      }
+    },
+    {
+      "case_key": "plate-tectonics",
+      "case_version": "v1",
+      "title": "Plate Tectonics and Continental Drift",
+      "topic": "Plate Tectonics",
+      "target_duration": 8.0,
+      "user_instruction": "Describe lithospheric plate boundaries and asthenosphere mantle convection.",
+      "tags": ["geology", "earth-science", "geophysics"],
+      "knowledge_fixture": {
+        "fixture_id": "fix-plate-tectonics",
+        "fixture_version": "v1.0",
+        "file_path": "fixtures/benchmark/knowledge/plate_tectonics.md",
+        "content_sha256": "7aca82d9df90106604299797e1271847d8f2a60db117b898bc5f2d0ab3646d6f"
+      },
+      "expected_constraints": {
+        "min_beats": 2,
+        "max_beats": 6,
+        "required_beat_types": ["HOOK", "KNOWLEDGE"],
+        "require_evidence_for_knowledge_beats": true,
+        "target_duration_tolerance": 2.0,
+        "minimum_shots": 2,
+        "maximum_shots": 8
+      }
+    },
+    {
+      "case_key": "blockchain-hash-chain",
+      "case_version": "v1",
+      "title": "Blockchain Hash-Chain Structure",
+      "topic": "Blockchain Hash-Chain Structure",
+      "target_duration": 8.0,
+      "user_instruction": "Explain how prior block hash pointers enforce immutability across distributed nodes.",
+      "tags": ["blockchain", "cryptography", "distributed-systems"],
+      "knowledge_fixture": {
+        "fixture_id": "fix-blockchain-hash-chain",
+        "fixture_version": "v1.0",
+        "file_path": "fixtures/benchmark/knowledge/blockchain_hash_chain.md",
+        "content_sha256": "d6d59ccba65013d8007f9b2486a57e785bdb4120212073eaa004f03f8f2f336f"
+      },
+      "expected_constraints": {
+        "min_beats": 2,
+        "max_beats": 6,
+        "required_beat_types": ["HOOK", "KNOWLEDGE"],
+        "require_evidence_for_knowledge_beats": true,
+        "target_duration_tolerance": 2.0,
+        "minimum_shots": 2,
+        "maximum_shots": 8
+      }
+    },
+    {
+      "case_key": "database-index",
+      "case_version": "v1",
+      "title": "Relational Database B-Tree Indexing",
+      "topic": "Relational Database Indexing",
+      "target_duration": 8.0,
+      "user_instruction": "Contrast O(log N) B-Tree index lookup with full table scans.",
+      "tags": ["database", "systems", "data-structures"],
+      "knowledge_fixture": {
+        "fixture_id": "fix-database-index",
+        "fixture_version": "v1.0",
+        "file_path": "fixtures/benchmark/knowledge/database_index.md",
+        "content_sha256": "cf7a1b80f55e820078ddb0ad2da502c16a7c38eca0172cd118977fb4c9aa63cf"
+      },
+      "expected_constraints": {
+        "min_beats": 2,
+        "max_beats": 6,
+        "required_beat_types": ["HOOK", "KNOWLEDGE"],
+        "require_evidence_for_knowledge_beats": true,
+        "target_duration_tolerance": 2.0,
+        "minimum_shots": 2,
+        "maximum_shots": 8
+      }
+    },
+    {
+      "case_key": "cpu-cache",
+      "case_version": "v1",
+      "title": "CPU Multi-Tier Cache Hierarchy",
+      "topic": "CPU Cache Hierarchy",
+      "target_duration": 8.0,
+      "user_instruction": "Explain L1, L2, L3 caches and spatial/temporal locality in preventing memory stalls.",
+      "tags": ["hardware", "cpu", "systems"],
+      "knowledge_fixture": {
+        "fixture_id": "fix-cpu-cache",
+        "fixture_version": "v1.0",
+        "file_path": "fixtures/benchmark/knowledge/cpu_cache.md",
+        "content_sha256": "5c1f9e7b3f20614973584c9c2306943e21ee2fb88d227488803b539159a08787"
+      },
+      "expected_constraints": {
+        "min_beats": 2,
+        "max_beats": 6,
+        "required_beat_types": ["HOOK", "KNOWLEDGE"],
+        "require_evidence_for_knowledge_beats": true,
+        "target_duration_tolerance": 2.0,
+        "minimum_shots": 2,
+        "maximum_shots": 8
+      }
+    }
+  ]
+}
