@@ -228,11 +228,11 @@ def test_production_registry_contains_no_fake_executors(session_factory):
         assert not executor.__class__.__name__.startswith(("Mock", "Fake", "Dummy"))
 
 
-def test_composition_remains_unsupported(session_factory):
+def test_quality_review_remains_unsupported(session_factory):
     registry = get_default_executor_registry(session_factory=session_factory)
-    assert not registry.has_executor(Stage.COMPOSITION)
-    assert registry.get_executor(Stage.COMPOSITION) is None
-    assert Stage.COMPOSITION not in registry.list_supported_stages()
+    assert not registry.has_executor(Stage.QUALITY_REVIEW)
+    assert registry.get_executor(Stage.QUALITY_REVIEW) is None
+    assert Stage.QUALITY_REVIEW not in registry.list_supported_stages()
 
 
 # =============================================================================

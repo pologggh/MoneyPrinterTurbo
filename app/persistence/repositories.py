@@ -2051,3 +2051,60 @@ class AudioOutputRepository:
         )
         return [audio_output_from_orm(r) for r in self._session.scalars(stmt).all()]
 
+
+class CompositionOutputRepository:
+    """Repository for persisting and querying immutable CompositionOutput records."""
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def save_composition_output(self, composition_output: Any) -> Any:
+        """Persists a new CompositionOutput."""
+        from app.persistence.converters import (
+            composition_output_from_orm,
+            composition_output_to_orm,
+        )
+        from app.persistence.models import CompositionOutputORM
+
+        orm = self._session.get(CompositionOutputORM, composition_output.composition_output_id)
+        if orm is None:
+            orm = composition_output_to_orm(composition_output)
+            self._session.add(orm)
+        self._session.flush()
+        return composition_output_from_orm(orm)
+
+    def get_composition_output(self, composition_output_id: str) -> Any | None:
+        """Retrieves a CompositionOutput by primary key ID."""
+        from app.persistence.converters import composition_output_from_orm
+        from app.persistence.models import CompositionOutputORM
+
+        orm = self._session.get(CompositionOutputORM, composition_output_id)
+        return composition_output_from_orm(orm) if orm is not None else None
+
+    def get_latest_composition_output_for_task(self, task_id: str) -> Any | None:
+        """Returns the latest CompositionOutput for a task based on created_at."""
+        from app.persistence.converters import composition_output_from_orm
+        from app.persistence.models import CompositionOutputORM
+
+        stmt = (
+            select(CompositionOutputORM)
+            .where(CompositionOutputORM.task_id == task_id)
+            .order_by(CompositionOutputORM.created_at.desc())
+            .limit(1)
+        )
+        orm = self._session.scalars(stmt).first()
+        return composition_output_from_orm(orm) if orm is not None else None
+
+    def list_composition_outputs_for_task(self, task_id: str) -> list[Any]:
+        """Lists all CompositionOutputs created for a task in chronological order."""
+        from app.persistence.converters import composition_output_from_orm
+        from app.persistence.models import CompositionOutputORM
+
+        stmt = (
+            select(CompositionOutputORM)
+            .where(CompositionOutputORM.task_id == task_id)
+            .order_by(CompositionOutputORM.created_at.asc())
+        )
+        return [composition_output_from_orm(r) for r in self._session.scalars(stmt).all()]
+
+

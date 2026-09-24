@@ -506,11 +506,10 @@ def test_production_registry_contains_production_plan_and_asset():
     assert isinstance(registry.get_executor(Stage.ASSET), AssetStageExecutor)
 
 
-def test_production_registry_leaves_audio_unsupported():
-    """Verify COMPOSITION and subsequent stages remain unsupported in default registry."""
+def test_production_registry_leaves_subsequent_stages_unsupported():
+    """Verify QUALITY_REVIEW and DELIVERY remain unsupported in default registry."""
     registry = get_default_executor_registry()
-    assert not registry.has_executor(Stage.COMPOSITION)
-    assert registry.get_executor(Stage.COMPOSITION) is None
+    assert registry.has_executor(Stage.COMPOSITION)
     assert not registry.has_executor(Stage.QUALITY_REVIEW)
     assert not registry.has_executor(Stage.DELIVERY)
 

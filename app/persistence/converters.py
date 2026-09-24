@@ -1924,3 +1924,52 @@ def audio_output_from_orm(orm: Any) -> Any:
         created_at=orm.created_at,
     )
 
+
+def composition_output_to_orm(composition: Any) -> Any:
+    """Converts a domain CompositionOutput to a CompositionOutputORM record."""
+    from app.persistence.models import CompositionOutputORM
+
+    return CompositionOutputORM(
+        composition_output_id=composition.composition_output_id,
+        task_id=composition.task_id,
+        storyboard_snapshot_id=composition.storyboard_snapshot_id,
+        execution_run_id=composition.execution_run_id,
+        audio_output_id=composition.audio_output_id,
+        video_path=composition.video_path,
+        video_hash=composition.video_hash,
+        duration=composition.duration,
+        width=composition.width,
+        height=composition.height,
+        file_size=composition.file_size,
+        video_codec=composition.video_codec,
+        audio_codec=composition.audio_codec,
+        fps=composition.fps,
+        composition_params_snapshot_json=composition.composition_params_snapshot or {},
+        created_at=composition.created_at,
+    )
+
+
+def composition_output_from_orm(orm: Any) -> Any:
+    """Reconstructs a domain CompositionOutput from a CompositionOutputORM record."""
+    from app.domain.composition import CompositionOutput
+
+    return CompositionOutput(
+        composition_output_id=orm.composition_output_id,
+        task_id=orm.task_id,
+        storyboard_snapshot_id=orm.storyboard_snapshot_id,
+        execution_run_id=orm.execution_run_id,
+        audio_output_id=orm.audio_output_id,
+        video_path=orm.video_path,
+        video_hash=orm.video_hash,
+        duration=orm.duration,
+        width=orm.width,
+        height=orm.height,
+        file_size=orm.file_size,
+        video_codec=orm.video_codec,
+        audio_codec=orm.audio_codec,
+        fps=orm.fps,
+        composition_params_snapshot=orm.composition_params_snapshot_json or {},
+        created_at=orm.created_at,
+    )
+
+

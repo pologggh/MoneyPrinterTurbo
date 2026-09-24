@@ -88,7 +88,7 @@ def test_production_registry_contains_no_fake_executors():
 
 
 def test_unimplemented_stages_remain_unsupported():
-    """Verify that COMPOSITION and subsequent stages remain unregistered in Stage A1."""
+    """Verify that QUALITY_REVIEW and subsequent stages remain unregistered in Stage C1."""
     registry = get_default_executor_registry()
     for stage in Stage:
         if stage not in (
@@ -99,6 +99,7 @@ def test_unimplemented_stages_remain_unsupported():
             Stage.PRODUCTION_PLAN,
             Stage.ASSET,
             Stage.AUDIO,
+            Stage.COMPOSITION,
         ):
             assert not registry.has_executor(stage)
             assert registry.get_executor(stage) is None
@@ -110,6 +111,7 @@ def test_unimplemented_stages_remain_unsupported():
         Stage.PRODUCTION_PLAN,
         Stage.ASSET,
         Stage.AUDIO,
+        Stage.COMPOSITION,
     }
 
 

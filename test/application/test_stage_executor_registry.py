@@ -27,11 +27,14 @@ def test_default_executor_registry_has_production_plan_and_asset_executors():
     from app.application.evidence_stage_executor import EvidenceStageExecutor
     from app.application.knowledge_plan_stage_executor import KnowledgePlanStageExecutor
     from app.application.production_plan_stage_executor import ProductionPlanStageExecutor
+    from app.application.composition_stage_executor import (
+        CompositionStageExecutor,
+    )
     from app.application.script_stage_executor import ScriptStageExecutor
     from app.application.storyboard_stage_executor import StoryboardStageExecutor
 
     registry = get_default_executor_registry()
-    assert len(registry.list_supported_stages()) == 7
+    assert len(registry.list_supported_stages()) == 8
     assert registry.has_executor(Stage.EVIDENCE)
     assert isinstance(registry.get_executor(Stage.EVIDENCE), EvidenceStageExecutor)
     assert registry.has_executor(Stage.KNOWLEDGE_PLAN)
@@ -46,6 +49,8 @@ def test_default_executor_registry_has_production_plan_and_asset_executors():
     assert isinstance(registry.get_executor(Stage.ASSET), AssetStageExecutor)
     assert registry.has_executor(Stage.AUDIO)
     assert isinstance(registry.get_executor(Stage.AUDIO), AudioStageExecutor)
+    assert registry.has_executor(Stage.COMPOSITION)
+    assert isinstance(registry.get_executor(Stage.COMPOSITION), CompositionStageExecutor)
 
     for stage in Stage:
         if stage not in (
@@ -56,6 +61,7 @@ def test_default_executor_registry_has_production_plan_and_asset_executors():
             Stage.PRODUCTION_PLAN,
             Stage.ASSET,
             Stage.AUDIO,
+            Stage.COMPOSITION,
         ):
             assert not registry.has_executor(stage)
             assert registry.get_executor(stage) is None

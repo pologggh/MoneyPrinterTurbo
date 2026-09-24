@@ -72,6 +72,12 @@ class StoryboardVideoAssemblyService:
         video_params: VideoParams | dict[str, Any] | None = None,
         task_id: str | None = None,
         session: Session | None = None,
+        audio_path: str | None = None,
+        subtitle_path: str | None = None,
+        audio_duration: float | None = None,
+        bgm_path: str | None = None,
+        bgm_volume: float | None = None,
+        output_file_path: str | None = None,
     ) -> StoryboardVideoAssemblyResult:
         """
         Executes end-to-end video assembly for an approved or completed storyboard.
@@ -94,6 +100,12 @@ class StoryboardVideoAssemblyService:
                     execution_run_id=execution_run_id,
                     video_params=video_params,
                     task_id=active_task_id,
+                    audio_path=audio_path,
+                    subtitle_path=subtitle_path,
+                    audio_duration=audio_duration,
+                    bgm_path=bgm_path,
+                    bgm_volume=bgm_volume,
+                    output_file_path=output_file_path,
                 )
 
             with get_session(self._session_factory) as db_session:
@@ -103,6 +115,12 @@ class StoryboardVideoAssemblyService:
                     execution_run_id=execution_run_id,
                     video_params=video_params,
                     task_id=active_task_id,
+                    audio_path=audio_path,
+                    subtitle_path=subtitle_path,
+                    audio_duration=audio_duration,
+                    bgm_path=bgm_path,
+                    bgm_volume=bgm_volume,
+                    output_file_path=output_file_path,
                 )
         except Exception:
             sm.state.patch_task(
@@ -121,6 +139,12 @@ class StoryboardVideoAssemblyService:
         execution_run_id: str | None,
         video_params: VideoParams | dict[str, Any] | None,
         task_id: str,
+        audio_path: str | None = None,
+        subtitle_path: str | None = None,
+        audio_duration: float | None = None,
+        bgm_path: str | None = None,
+        bgm_volume: float | None = None,
+        output_file_path: str | None = None,
     ) -> StoryboardVideoAssemblyResult:
         from app.services import task, video
 
@@ -267,52 +291,100 @@ class StoryboardVideoAssemblyService:
             full_script=full_script,
         )
 
-        # 4. Generate Narration Audio (TTS)
-        logger.info(f"Generating TTS audio for storyboard: task_id={task_id}")
-        audio_file, audio_duration, sub_maker = task.generate_audio(
-            task_id=task_id,
-            params=params,
-            video_script=full_script,
-        )
-        if not audio_file or not os.path.isfile(audio_file):
-            sm.state.update_task(task_id, state=const.TASK_STATE_FAILED)
-            raise StoryboardAssemblyError(
-                f"Failed to generate TTS audio for storyboard task '{task_id}'"
-            )
-
-        sm.state.update_task(task_id, progress=40)
-
-        # 5. Generate Subtitles
-        logger.info(f"Generating subtitles for storyboard: task_id={task_id}")
-        subtitle_path = ""
-        if params.subtitle_enabled:
-            subtitle_path = task.generate_subtitle(
+        # 4. Generate or Use Prepared Narration Audio
+        if audio_path:
+            audio_file = audio_path
+            resolved_audio_duration = audio_duration
+            if resolved_audio_duration is None:
+                from app.services import voice
+                resolved_audio_duration = voice.get_audio_duration(audio_file)
+            sub_maker = None
+        else:
+            logger.info(f"Generating TTS audio for storyboard: task_id={task_id}")
+            audio_file, resolved_audio_duration, sub_maker = task.generate_audio(
                 task_id=task_id,
                 params=params,
                 video_script=full_script,
-                sub_maker=sub_maker,
-                audio_file=audio_file,
             )
+            if not audio_file or not os.path.isfile(audio_file):
+                sm.state.update_task(task_id, state=const.TASK_STATE_FAILED)
+                raise StoryboardAssemblyError(
+                    f"Failed to generate TTS audio for storyboard task '{task_id}'"
+                )
+
+        sm.state.update_task(task_id, progress=40)
+
+        # 5. Subtitles
+        if subtitle_path is not None:
+            resolved_subtitle_path = subtitle_path
+        else:
+            logger.info(f"Generating subtitles for storyboard: task_id={task_id}")
+            resolved_subtitle_path = ""
+            if params.subtitle_enabled:
+                resolved_subtitle_path = task.generate_subtitle(
+                    task_id=task_id,
+                    params=params,
+                    video_script=full_script,
+                    sub_maker=sub_maker,
+                    audio_file=audio_file,
+                )
 
         sm.state.update_task(task_id, progress=55)
 
         # 6. Video Composition & BGM Mixing
         logger.info(
             f"Composing final video for storyboard: task_id={task_id}, "
-            f"clips={len(ordered_video_materials)}, duration={audio_duration:.1f}s"
+            f"clips={len(ordered_video_materials)}, duration={resolved_audio_duration:.1f}s"
         )
         # Ensure sequential stitching matching storyboard shot order
         params.match_materials_to_script = True
         params.video_concat_mode = VideoConcatMode.sequential
+        if bgm_volume is not None:
+            params.bgm_volume = bgm_volume
 
-        final_video_paths, combined_video_paths, warnings = task.generate_final_videos(
-            task_id=task_id,
-            params=params,
-            downloaded_videos=ordered_video_materials,
-            audio_file=audio_file,
-            subtitle_path=subtitle_path,
-            audio_duration=audio_duration,
-        )
+        if audio_path or output_file_path or bgm_path is not None:
+            # Unified workflow composition path (or custom output):
+            # Directly combine clips and generate final video without legacy multi-video/AI-music re-selection
+            final_video_path = output_file_path or os.path.join(
+                utils.task_dir(task_id), "final-1.mp4"
+            )
+            combined_video_path = os.path.join(
+                utils.task_dir(task_id), f"combined-{storyboard_snapshot_id[:8]}.mp4"
+            )
+            video.combine_videos(
+                combined_video_path=combined_video_path,
+                video_paths=ordered_video_materials,
+                audio_file=audio_file,
+                video_aspect=params.video_aspect,
+                video_fit_mode=params.video_fit_mode,
+                video_concat_mode=params.video_concat_mode,
+                video_transition_mode=params.video_transition_mode,
+                max_clip_duration=params.video_clip_duration,
+                threads=params.n_threads,
+                clip_speed=params.video_clip_speed,
+            )
+
+            bgm_override = bgm_path if bgm_path is not None else ("" if params.bgm_type else None)
+            video.generate_video(
+                video_path=combined_video_path,
+                audio_path=audio_file,
+                subtitle_path=resolved_subtitle_path,
+                output_file=final_video_path,
+                params=params,
+                bgm_file_override=bgm_override,
+            )
+            final_video_paths = [final_video_path]
+            combined_video_paths = [combined_video_path]
+            warnings = []
+        else:
+            final_video_paths, combined_video_paths, warnings = task.generate_final_videos(
+                task_id=task_id,
+                params=params,
+                downloaded_videos=ordered_video_materials,
+                audio_file=audio_file,
+                subtitle_path=resolved_subtitle_path,
+                audio_duration=resolved_audio_duration,
+            )
 
         if not final_video_paths:
             sm.state.update_task(task_id, state=const.TASK_STATE_FAILED)
@@ -341,8 +413,8 @@ class StoryboardVideoAssemblyService:
             final_video_paths=final_video_paths,
             combined_video_paths=combined_video_paths,
             audio_path=audio_file,
-            subtitle_path=subtitle_path,
-            audio_duration=float(audio_duration),
+            subtitle_path=resolved_subtitle_path,
+            audio_duration=float(resolved_audio_duration),
             warnings=warnings,
             status="COMPLETED",
         )

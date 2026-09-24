@@ -2,6 +2,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     DateTime,
     Float,
     ForeignKey,
@@ -1455,4 +1456,53 @@ class AudioOutputORM(Base):
         Index("ix_audio_outputs_script_rev_id", "script_revision_id"),
         Index("ix_audio_outputs_exec_run_id", "execution_run_id"),
     )
+
+
+class CompositionOutputORM(Base):
+    __tablename__ = "composition_outputs"
+
+    composition_output_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    task_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("knowledge_video_tasks.task_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    storyboard_snapshot_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("storyboard_snapshots.storyboard_snapshot_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    execution_run_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("execution_runs.execution_run_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    audio_output_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("audio_outputs.audio_output_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    video_path: Mapped[str] = mapped_column(String(512), nullable=False)
+    video_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    duration: Mapped[float] = mapped_column(Float, nullable=False)
+    width: Mapped[int] = mapped_column(Integer, nullable=False)
+    height: Mapped[int] = mapped_column(Integer, nullable=False)
+    file_size: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    video_codec: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    audio_codec: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    fps: Mapped[float | None] = mapped_column(Float, nullable=True)
+    composition_params_snapshot_json: Mapped[dict] = mapped_column(
+        EvidenceType, nullable=False, default=dict
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_composition_outputs_task_id", "task_id"),
+        Index("ix_composition_outputs_snapshot_id", "storyboard_snapshot_id"),
+        Index("ix_composition_outputs_exec_run_id", "execution_run_id"),
+        Index("ix_composition_outputs_audio_id", "audio_output_id"),
+    )
+
 
