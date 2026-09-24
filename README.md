@@ -18,6 +18,26 @@
 
 </div>
 
+> [!IMPORTANT]
+> **这是基于 [harry0703/MoneyPrinterTurbo](https://github.com/harry0703/MoneyPrinterTurbo) 的二次开发项目。**
+> 本分支在保留原有 AI 短视频生成能力的基础上，新增了面向知识型视频生产的 Agent 工作流、RAG 检索、证据溯源、质量评测与自动修复体系。
+
+## Agentic Knowledge Video：二次开发内容 🧠
+
+本项目将原有的“一键生成短视频”流程扩展为可追踪、可验证、可恢复的知识视频生产系统。主要新增能力包括：
+
+- **证据驱动的内容生产**：支持来源记录、证据溯源和授权 Web Research，降低知识内容中的无依据生成。
+- **混合知识检索**：提供 BM25、Dense Embedding 与 Hybrid RAG 检索路径，并配套检索 Benchmark。
+- **十阶段 Agent 工作流**：覆盖知识规划、证据研究、脚本、分镜、生产计划、素材、音频、合成、质量审查和交付。
+- **可控分镜工作台**：支持分镜生成、编辑、审批、增量重跑以及前后端联动。
+- **多媒体生产编排**：统一管理素材路由、视频生成、音频生产、成片合成和交付报告。
+- **质量评测与局部修复**：根据评测结果进行受控重规划和局部 remediation，避免无边界全量重跑。
+- **工程化运行保障**：增加持久化模型、数据库迁移、StageWorker、执行 Trace、离线 E2E 和 Benchmark 体系。
+
+代码基线保留在 `main`，二次开发成果位于 `feat/agentic-knowledge-video`。可查看 [完整代码差异](https://github.com/pologggh/MoneyPrinterTurbo/compare/main...feat/agentic-knowledge-video) 和该分支的提交历史。
+
+> 原项目版权、许可证及上游作者归属保持不变。本仓库重点展示本人在知识视频 Agent 架构和工程实现上的二次开发工作。
+
 ## 界面预览 🖥️
 
 <h4 align="center">WebUI</h4>
