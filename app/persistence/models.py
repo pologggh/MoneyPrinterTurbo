@@ -123,6 +123,11 @@ class ShotRevisionORM(Base):
         ForeignKey("content_beats.beat_id", ondelete="RESTRICT"),
         nullable=False,
     )
+    script_segment_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("script_segments.script_segment_id", ondelete="SET NULL"),
+        nullable=True,
+    )
     narration: Mapped[str] = mapped_column(Text, nullable=False)
     target_duration: Mapped[float] = mapped_column(Float, nullable=False)
     visual_goal: Mapped[str] = mapped_column(Text, nullable=False)
@@ -148,6 +153,7 @@ class ShotRevisionORM(Base):
         Index("ix_shot_revisions_shot_id", "shot_id"),
         Index("ix_shot_revisions_beat_lineage_id", "beat_lineage_id"),
         Index("ix_shot_revisions_created_from_beat", "created_from_beat_instance_id"),
+        Index("ix_shot_revisions_script_segment_id", "script_segment_id"),
     )
 
 

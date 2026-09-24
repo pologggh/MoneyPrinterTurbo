@@ -104,6 +104,14 @@ class StoryboardPlanningInput(BaseModel):
         default=True,
         description="If True, factual shots require verified evidence citations",
     )
+    authoritative_narration: str | None = Field(
+        default=None,
+        description="Optional authoritative spoken narration text from Script",
+    )
+    script_segment_id: str | None = Field(
+        default=None,
+        description="Optional ID of the originating ScriptSegment",
+    )
 
 
 class StoryboardShotProposal(BaseModel):
@@ -187,6 +195,16 @@ def build_storyboard_prompt(input_data: StoryboardPlanningInput) -> str:
         if input_data.user_instruction
         else ""
     )
+    narration_section = ""
+    if input_data.authoritative_narration:
+        narration_section = (
+            f"\n## Authoritative Script Narration:\n"
+            f'"{input_data.authoritative_narration.strip()}"\n'
+            f"Note: This narration is the authoritative spoken script from the Script stage. "
+            f"Your shot narration MUST be strictly derived from this text. "
+            f"If 1 shot is produced, use this exact narration. "
+            f"If splitting across multiple shots, partition this text across them in order.\n"
+        )
 
     return f"""# Role: Expert Knowledge Video Storyboard Agent
 
@@ -200,7 +218,7 @@ Plan Revision ID: {input_data.content_plan_revision_id}{aspect_str}{lang_str}{us
 - Beat Type: {beat.beat_type.value}
 - Intent: {beat.intent}
 - Target Duration: {beat.target_duration} seconds
-- Beat Evidence Refs: {list(beat.evidence_refs)}{evidence_section}
+- Beat Evidence Refs: {list(beat.evidence_refs)}{evidence_section}{narration_section}
 ## Strict Rules:
 1. One Primary Visual Per Shot:
    - Each Shot represents ONE primary visual scene. If multiple visual moments are needed, create multiple shots (1..N).
@@ -378,6 +396,10 @@ class StoryboardAgent:
             system_shot_id = str(uuid4())
             system_shot_rev_id = str(uuid4())
 
+            shot_narration = s.narration.strip()
+            if input_data.authoritative_narration and len(sorted_proposals) == 1:
+                shot_narration = input_data.authoritative_narration.strip()
+
             shot_entity = Shot(
                 shot_id=system_shot_id,
                 beat_lineage_id=input_data.beat.beat_lineage_id,
@@ -389,7 +411,8 @@ class StoryboardAgent:
                 revision_number=1,
                 beat_lineage_id=input_data.beat.beat_lineage_id,
                 created_from_beat_instance_id=input_data.beat.beat_id,
-                narration=s.narration.strip(),
+                script_segment_id=input_data.script_segment_id,
+                narration=shot_narration,
                 target_duration=s.target_duration,
                 visual_goal=s.visual_goal,
                 visual_type=s.visual_type,

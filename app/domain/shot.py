@@ -44,6 +44,10 @@ class ShotRevision(BaseModel):
     created_from_beat_instance_id: str = Field(
         description="ID of the specific ContentBeat instance that produced this revision"
     )
+    script_segment_id: str | None = Field(
+        default=None,
+        description="ID of the originating ScriptSegment instance that produced this revision",
+    )
     narration: str
     target_duration: float = Field(gt=0, description="Target duration in seconds")
     visual_goal: str

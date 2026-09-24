@@ -5,7 +5,10 @@ from datetime import UTC, datetime
 from sqlalchemy.orm import Session
 
 from app.application.workflow_policy import WorkflowPolicy
+from app.domain.enums import StoryboardSnapshotState
 from app.domain.knowledge_video_task import KnowledgeVideoTask
+from app.domain.storyboard_approval import StoryboardApprovalService
+from app.domain.task_artifact import ArtifactType, TaskArtifactRef
 from app.domain.workflow_job import WorkflowJob
 from app.domain.workflow_state import (
     JobErrorType,
@@ -15,8 +18,12 @@ from app.domain.workflow_state import (
     get_next_stage,
 )
 from app.persistence.repositories import (
+    ContentPlanRepository,
     KnowledgeVideoTaskRepository,
+    ShotRepository,
     StageExecutionRepository,
+    StoryboardApprovalRepository,
+    StoryboardRepository,
     TaskArtifactRepository,
     WorkflowJobRepository,
 )
@@ -72,6 +79,16 @@ class KnowledgeVideoWorkflow:
             self.task_repo.save_task(task)
             return None
 
+        # If completed stage was STORYBOARD under AUTO, invoke domain Storyboard approval automatically
+        output_ref_id = completed_job.output_task_artifact_ref_id
+        if completed_job.stage == Stage.STORYBOARD:
+            output_ref_id = self._approve_storyboard_for_task(
+                task_id=task.task_id,
+                draft_output_ref_id=completed_job.output_task_artifact_ref_id,
+                approved_by="workflow_auto",
+                now=ts,
+            )
+
         task.advance_stage(next_stage)
         if task.task_status != TaskStatus.RUNNING:
             task.transition_to(TaskStatus.RUNNING, now=ts)
@@ -90,7 +107,7 @@ class KnowledgeVideoWorkflow:
             idempotency_key=idempotency_key,
             attempt_number=1,
             input_artifact_revision_id=completed_job.output_artifact_revision_id,
-            input_task_artifact_ref_id=completed_job.output_task_artifact_ref_id,
+            input_task_artifact_ref_id=output_ref_id,
             now=ts,
         )
         return self.job_repo.create_job(next_job)
@@ -164,12 +181,21 @@ class KnowledgeVideoWorkflow:
             self.task_repo.save_task(task)
             return None
 
+        latest_ref = self.artifact_repo.get_latest_artifact_ref(task.task_id, stage=prior_stage)
+        input_ref_id = latest_ref.task_artifact_ref_id if latest_ref else None
+
+        # If resuming from STORYBOARD checkpoint, perform domain approval
+        if prior_stage == Stage.STORYBOARD:
+            input_ref_id = self._approve_storyboard_for_task(
+                task_id=task.task_id,
+                draft_output_ref_id=input_ref_id,
+                approved_by="user_approval",
+                now=ts,
+            )
+
         task.advance_stage(next_stage)
         task.transition_to(TaskStatus.RUNNING, now=ts)
         self.task_repo.save_task(task)
-
-        latest_ref = self.artifact_repo.get_latest_artifact_ref(task.task_id, stage=prior_stage)
-        input_ref_id = latest_ref.task_artifact_ref_id if latest_ref else None
 
         seq = 1
         idempotency_key = f"idemp_{task.task_id}_{next_stage.value.lower()}_{seq}"
@@ -186,3 +212,69 @@ class KnowledgeVideoWorkflow:
             now=ts,
         )
         return self.job_repo.create_job(next_job)
+
+    def _approve_storyboard_for_task(
+        self,
+        task_id: str,
+        draft_output_ref_id: str | None,
+        approved_by: str = "workflow",
+        user_note: str | None = None,
+        now: datetime | None = None,
+    ) -> str | None:
+        """
+        Executes domain approval via StoryboardApprovalService for a task's DRAFT storyboard.
+        Persists a new TaskArtifactRef for the APPROVED snapshot and returns its task_artifact_ref_id.
+        """
+        ts = now or datetime.now(UTC)
+        draft_ref = None
+        if draft_output_ref_id:
+            draft_ref = self.artifact_repo.get_artifact_ref(draft_output_ref_id)
+        if draft_ref is None:
+            draft_ref = self.artifact_repo.get_latest_artifact_ref(
+                task_id=task_id,
+                stage=Stage.STORYBOARD,
+                artifact_type=ArtifactType.STORYBOARD_SNAPSHOT,
+            )
+        if draft_ref is None:
+            return draft_output_ref_id
+
+        storyboard_repo = StoryboardRepository(self._session)
+        snap = storyboard_repo.get_snapshot(draft_ref.artifact_id)
+        if snap is not None and snap.snapshot_state == StoryboardSnapshotState.APPROVED:
+            return draft_ref.task_artifact_ref_id
+
+        plan_repo = ContentPlanRepository(self._session)
+        shot_repo = ShotRepository(self._session)
+        approval_repo = StoryboardApprovalRepository(self._session)
+
+        approval_service = StoryboardApprovalService(
+            plan_repository=plan_repo,
+            shot_repository=shot_repo,
+            storyboard_repository=storyboard_repo,
+            approval_repository=approval_repo,
+        )
+
+        outcome = approval_service.approve_storyboard(
+            storyboard_snapshot_id=draft_ref.artifact_id,
+            approved_by=approved_by,
+            user_note=user_note,
+        )
+
+        approved_snapshot = outcome.approved_snapshot
+        approved_ref = TaskArtifactRef.create(
+            task_id=task_id,
+            stage=Stage.STORYBOARD,
+            artifact_type=ArtifactType.STORYBOARD_SNAPSHOT,
+            artifact_id=approved_snapshot.storyboard_snapshot_id,
+            artifact_version="approved",
+            metadata_json={
+                "source_draft_snapshot_id": draft_ref.artifact_id,
+                "approved_snapshot_id": approved_snapshot.storyboard_snapshot_id,
+                "approved_by": approved_by,
+                "shot_count": len(approved_snapshot.shot_revision_ids),
+                "state": approved_snapshot.snapshot_state.value,
+            },
+            now=ts,
+        )
+        saved_ref = self.artifact_repo.save_artifact_ref(approved_ref)
+        return saved_ref.task_artifact_ref_id

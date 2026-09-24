@@ -88,13 +88,13 @@ def test_production_registry_contains_no_fake_executors():
 
 
 def test_unimplemented_stages_remain_unsupported():
-    """Verify that STORYBOARD and subsequent stages remain unregistered in Stage S1."""
+    """Verify that PRODUCTION_PLAN and subsequent stages remain unregistered in Stage SB1."""
     registry = get_default_executor_registry()
     for stage in Stage:
-        if stage not in (Stage.EVIDENCE, Stage.KNOWLEDGE_PLAN, Stage.SCRIPT):
+        if stage not in (Stage.EVIDENCE, Stage.KNOWLEDGE_PLAN, Stage.SCRIPT, Stage.STORYBOARD):
             assert not registry.has_executor(stage)
             assert registry.get_executor(stage) is None
-    assert registry.list_supported_stages() == {Stage.EVIDENCE, Stage.KNOWLEDGE_PLAN, Stage.SCRIPT}
+    assert registry.list_supported_stages() == {Stage.EVIDENCE, Stage.KNOWLEDGE_PLAN, Stage.SCRIPT, Stage.STORYBOARD}
 
 
 # =============================================================================
