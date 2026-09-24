@@ -1,8 +1,8 @@
 <div align="center">
 
-# MoneyPrinterTurbo 💸
+# MoneyPrinterTurbo · Agentic Knowledge Video Edition 💸
 
-### 一站式 AI 短视频生成工具
+### 基于知识与证据的 Agentic 视频生产工作流
 
 只需提供视频<b>主题</b>或<b>关键词</b>，即可自动生成视频脚本、匹配素材、生成字幕和背景音乐，并合成高清短视频。
 
@@ -19,24 +19,182 @@
 </div>
 
 > [!IMPORTANT]
-> **这是基于 [harry0703/MoneyPrinterTurbo](https://github.com/harry0703/MoneyPrinterTurbo) 的二次开发项目。**
-> 本分支在保留原有 AI 短视频生成能力的基础上，新增了面向知识型视频生产的 Agent 工作流、RAG 检索、证据溯源、质量评测与自动修复体系。
+> **本仓库是基于 [harry0703/MoneyPrinterTurbo](https://github.com/harry0703/MoneyPrinterTurbo) 的二次开发项目。**
+> 上游项目提供了 AI 短视频生成基础能力；本分支进一步实现了证据驱动、可持久化、可评测、可局部恢复的知识视频 Agent 生产系统。
 
-## Agentic Knowledge Video：二次开发内容 🧠
+## 二次开发项目概览 🧠
 
-本项目将原有的“一键生成短视频”流程扩展为可追踪、可验证、可恢复的知识视频生产系统。主要新增能力包括：
+> 从“输入主题后生成视频”扩展到“基于知识与证据，经过规划、生产、验证和修复后交付视频”的完整 Agent 工作流。
 
-- **证据驱动的内容生产**：支持来源记录、证据溯源和授权 Web Research，降低知识内容中的无依据生成。
-- **混合知识检索**：提供 BM25、Dense Embedding 与 Hybrid RAG 检索路径，并配套检索 Benchmark。
-- **十阶段 Agent 工作流**：覆盖知识规划、证据研究、脚本、分镜、生产计划、素材、音频、合成、质量审查和交付。
-- **可控分镜工作台**：支持分镜生成、编辑、审批、增量重跑以及前后端联动。
-- **多媒体生产编排**：统一管理素材路由、视频生成、音频生产、成片合成和交付报告。
-- **质量评测与局部修复**：根据评测结果进行受控重规划和局部 remediation，避免无边界全量重跑。
-- **工程化运行保障**：增加持久化模型、数据库迁移、StageWorker、执行 Trace、离线 E2E 和 Benchmark 体系。
+[查看二次开发完整差异](https://github.com/pologggh/MoneyPrinterTurbo/compare/main...feat/agentic-knowledge-video) · [查看开发提交历史](https://github.com/pologggh/MoneyPrinterTurbo/commits/feat/agentic-knowledge-video) · [阅读统一工作流设计](docs/superpowers/specs/2026-09-11-knowledge-video-agent-unified-workflow-design.md) · [本地开发指南](docs/DEVELOPMENT.md)
 
-代码基线保留在 `main`，二次开发成果位于 `feat/agentic-knowledge-video`。可查看 [完整代码差异](https://github.com/pologggh/MoneyPrinterTurbo/compare/main...feat/agentic-knowledge-video) 和该分支的提交历史。
+## 30 秒看懂这次二次开发
 
-> 原项目版权、许可证及上游作者归属保持不变。本仓库重点展示本人在知识视频 Agent 架构和工程实现上的二次开发工作。
+原版 MoneyPrinterTurbo 主要解决“如何快速生成一条短视频”。本分支重点解决知识型视频生产中的另一组问题：信息从哪里来、如何检索、如何形成可审查的脚本与分镜、失败后如何局部恢复，以及最终结果如何被评测和追踪。
+
+| 维度 | Original MoneyPrinterTurbo | Agentic Knowledge Video Edition |
+| --- | --- | --- |
+| 输入 | 主题、关键词或已有文案 | 主题、知识库、文件证据和授权 Web Research |
+| 知识检索 | 以素材搜索为主 | BM25、Dense Embedding、Hybrid RAG 与自动回退 |
+| 执行方式 | 单次视频生成流水线 | 持久化 Job 驱动的十阶段 Agent 工作流 |
+| 内容可信度 | 依赖模型生成结果 | Evidence、Source、Chunk、Citation 全链路溯源 |
+| 分镜控制 | 自动生成后进入生产 | 草稿、编辑、审批、局部重规划和增量重跑 |
+| 生产编排 | 素材、配音、字幕和合成 | Production Plan、供应商路由、资产执行、音频、合成和交付 |
+| 质量控制 | 生成完成后输出 | 多维评测、受控 remediation 和失败恢复 |
+| 可观测性 | 任务状态和最终文件 | WorkflowJob、Artifact、Trace、Evaluation 与 Benchmark |
+
+## 系统架构
+
+```mermaid
+flowchart TD
+    UI[Streamlit WebUI] --> API[FastAPI API]
+    API --> TASK[Knowledge Video Task]
+    TASK --> EVIDENCE[Evidence & Authorized Web Research]
+    EVIDENCE --> KB[Knowledge Base]
+    KB --> RAG[BM25 + Dense + Hybrid RAG]
+    RAG --> PLAN[Persistent Workflow Planner]
+    PLAN --> JOBS[(Workflow Jobs)]
+    JOBS --> WORKER[StageWorker]
+    WORKER --> PIPELINE[10-Stage Production Pipeline]
+    PIPELINE --> REVIEW[Evaluation & Quality Review]
+    REVIEW -->|Pass| DELIVERY[Delivery Artifact]
+    REVIEW -->|Partial remediation| JOBS
+    PIPELINE --> TRACE[Execution Trace]
+    REVIEW --> BENCH[Benchmark & Comparison]
+```
+
+系统采用 API、持久化任务、独立 Worker 和阶段执行器分离的结构。Web 请求只负责创建或控制任务，`StageWorker` 从数据库认领 Job，再通过注册表找到对应执行器。每个阶段产出可追踪 Artifact，并由工作流状态机决定进入下一阶段、局部重跑或停止。
+
+## 十阶段知识视频工作流
+
+```text
+Evidence
+  → Knowledge Plan
+  → Script
+  → Storyboard
+  → Production Plan
+  → Asset
+  → Audio
+  → Composition
+  → Quality Review
+  → Delivery
+```
+
+阶段顺序由 [`Stage`](app/domain/workflow_state.py) 和 `STAGE_ORDER` 统一定义；生产实现通过 [`StageExecutorRegistry`](app/application/stage_executor_registry.py) 注册，在线模式和离线 E2E 模式复用同一组真实阶段执行器。
+
+## 我的核心工程工作
+
+### 1. Evidence 与知识检索
+
+- 建立 Evidence、SourceDocument、KnowledgeChunk 和检索快照等领域模型。
+- 支持文件解析、切片、任务级知识库和来源关联。
+- 实现授权 Web Research，并持久化搜索与抓取结果。
+- 实现 BM25、Dense Embedding、Hybrid RAG、RRF 融合和向量不可用时的 BM25 fallback。
+- 提供 BM25 / Dense / Hybrid 三种模式的检索 Benchmark。
+
+代码入口：[`app/services/knowledge/`](app/services/knowledge) · [`evidence_service.py`](app/application/evidence_service.py) · [`knowledge_retrieval_service.py`](app/application/knowledge_retrieval_service.py)
+
+### 2. 持久化 Agent 工作流
+
+- 将视频生产拆分为十个具备明确输入、输出和状态边界的 Stage。
+- 使用持久化 `WorkflowJob`、幂等键、租约和 fencing 处理重复执行与并发认领。
+- 通过独立 `StageWorker` 执行后台任务，API 进程不承担长时间生产工作。
+- 为失败任务提供重试、恢复、增量执行和阶段级结果持久化。
+
+代码入口：[`knowledge_video_workflow.py`](app/application/knowledge_video_workflow.py) · [`stage_worker.py`](app/workers/stage_worker.py) · [`workflow_state.py`](app/domain/workflow_state.py)
+
+### 3. 分镜工作台与生产编排
+
+- 实现从知识计划到脚本、分镜和 Production Plan 的逐级产物转换。
+- 支持分镜草稿、人工审批、beat 级局部重规划和版本快照。
+- 引入资产能力注册、供应商探测、质量感知复用和路由计划执行。
+- 提供 WebUI 分镜工作台、知识库管理和任务操作界面。
+
+代码入口：[`storyboard_workbench.py`](webui/storyboard_workbench.py) · [`storyboard.py`](app/controllers/v1/storyboard.py) · [`asset_route_planning_service.py`](app/services/asset_route_planning_service.py)
+
+### 4. 质量评测与局部修复
+
+- 对镜头素材、音视频和合成结果执行维度化评测。
+- 基于冻结证据进行 Quality Review，避免评测阶段重新搜索导致标准漂移。
+- 通过确定性策略选择接受、局部重试、重新规划或停止。
+- 只重做失败范围，避免无边界地重新执行整条视频流水线。
+
+代码入口：[`quality_review_stage_executor.py`](app/application/quality_review_stage_executor.py) · [`app/services/evaluation/`](app/services/evaluation) · [`quality_remediation_policy.py`](app/domain/quality_remediation_policy.py)
+
+### 5. Trace、Benchmark 与工程化运行
+
+- 记录任务、阶段、工具输出、Artifact、Evaluation 和 remediation 决策。
+- 提供生产 Benchmark、报告导出、结果比较和门禁能力。
+- 增加 SQLite / PostgreSQL 数据库生命周期管理和 25 个迁移版本。
+- 提供统一开发启动器，一次启动 Backend、StageWorker 和 WebUI。
+- 提供不依赖真实外部供应商的离线 E2E 执行模式。
+
+代码入口：[`trace_service.py`](app/services/trace_service.py) · [`app/services/benchmark/`](app/services/benchmark) · [`migrations/versions/`](migrations/versions) · [`dev.py`](dev.py)
+
+## 工程规模
+
+以下数据来自 `main...feat/agentic-knowledge-video` 的实际 Git 差异与仓库文件统计：
+
+| 指标 | 数量 |
+| --- | ---: |
+| 核心设计与功能提交 | 22 |
+| 变更文件 | 336 |
+| 变更的应用层 Python 文件 | 124 |
+| 新增测试文件 | 127 |
+| 数据库迁移版本 | 25 |
+| 当前仓库测试文件 | 188 |
+
+这些数字用于说明实现范围，不代表本次 README 更新重新执行了完整测试套件。测试代码覆盖领域模型、持久化、API、Worker、知识检索、分镜、生产执行、质量评测和离线集成路径。
+
+## 快速启动二次开发版本
+
+本地轻量模式默认使用 SQLite，并同时启动 FastAPI、StageWorker 和 Streamlit WebUI。
+
+### Windows
+
+```powershell
+.\dev.bat
+```
+
+### macOS / Linux
+
+```bash
+sh dev.sh
+# 或
+python3 dev.py
+```
+
+### Docker Compose
+
+```bash
+docker compose up -d
+docker compose ps
+```
+
+更完整的前置检查、端口配置、无界面模式和安全停止说明见 [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)。真实 API Key 应只保存在被 `.gitignore` 忽略的 `config.toml` 中，不应提交到仓库。
+
+## 推荐代码阅读顺序
+
+1. [`app/domain/workflow_state.py`](app/domain/workflow_state.py)：理解任务状态和十阶段顺序。
+2. [`app/application/knowledge_video_workflow.py`](app/application/knowledge_video_workflow.py)：理解阶段推进、重试和局部重跑。
+3. [`app/workers/stage_worker.py`](app/workers/stage_worker.py)：理解 Job 认领、租约和阶段执行。
+4. [`app/application/stage_executor_registry.py`](app/application/stage_executor_registry.py)：查看十个生产执行器如何注册。
+5. [`app/services/knowledge/hybrid_retriever.py`](app/services/knowledge/hybrid_retriever.py)：理解 Hybrid RAG 与 fallback。
+6. [`webui/agent_page.py`](webui/agent_page.py) 和 [`webui/storyboard_workbench.py`](webui/storyboard_workbench.py)：理解二次开发 UI。
+7. [`docs/superpowers/specs/2026-09-11-knowledge-video-agent-unified-workflow-design.md`](docs/superpowers/specs/2026-09-11-knowledge-video-agent-unified-workflow-design.md)：阅读完整设计背景与边界。
+
+## 分支与上游归属
+
+- `main`：保留 fork 时的 Original MoneyPrinterTurbo baseline。
+- `feat/agentic-knowledge-video`：本仓库的二次开发主线，也是当前默认分支。
+- [完整代码差异](https://github.com/pologggh/MoneyPrinterTurbo/compare/main...feat/agentic-knowledge-video)：查看所有新增和修改内容。
+- [上游项目](https://github.com/harry0703/MoneyPrinterTurbo)：查看 Original MoneyPrinterTurbo 的持续开发。
+
+原项目版权、许可证和作者归属保持不变。本仓库只将本人实际完成的 Agentic Knowledge Video 架构、代码、测试与文档标记为二次开发成果。
+
+---
+
+## 上游 MoneyPrinterTurbo 原始说明
 
 ## 界面预览 🖥️
 
