@@ -77,6 +77,18 @@ class UnsupportedSourceTypeError(EvidenceDomainError):
     """Raised when an unsupported or synthetic source type is supplied."""
 
 
+class DocumentTextNotExtractableError(EvidenceDomainError):
+    """Raised when a document (such as a scanned or image-only PDF) has no extractable text."""
+
+
+class SourceContentUnavailableError(EvidenceDomainError):
+    """Raised when source content, file bytes, or storage locator is unavailable or missing."""
+
+
+class UrlFetchError(EvidenceDomainError):
+    """Raised when an explicit URL cannot be fetched or violates security / size constraints."""
+
+
 # =============================================================================
 # Deterministic Hashing & Identification Helpers
 # =============================================================================
@@ -127,6 +139,46 @@ def compute_snapshot_fingerprint(
     evs = ",".join(sorted(evidence_ids))
     claims = ",".join(sorted(knowledge_claim_ids))
     payload = f"{srcs}|{evs}|{claims}".encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def compute_chunk_id(
+    source_fingerprint: str,
+    processing_version: str,
+    locator: dict[str, Any] | str,
+    normalized_text: str,
+) -> str:
+    """Compute deterministic, stable chunk ID in the format `chk_<sha256[:24]>`."""
+    if isinstance(locator, dict):
+        loc_str = json.dumps(locator, sort_keys=True, separators=(",", ":"))
+    else:
+        loc_str = str(locator).strip()
+    text_hash = compute_sha256(normalized_text)
+    payload = f"{source_fingerprint}:{processing_version}:{loc_str}:{text_hash}".encode("utf-8")
+    digest = hashlib.sha256(payload).hexdigest()
+    return f"chk_{digest[:24]}"
+
+
+def compute_retrieval_snapshot_fingerprint(
+    task_id: str,
+    query: str,
+    source_scope_ids: Sequence[str],
+    retrieval_policy_version: str,
+    processing_version: str,
+    candidates: Sequence[Any],
+    selected_evidence_ids: Sequence[str],
+) -> str:
+    """Compute deterministic content fingerprint for a RetrievalSnapshot."""
+    scopes_str = ",".join(sorted(source_scope_ids))
+    ev_str = ",".join(sorted(selected_evidence_ids))
+    cand_items = []
+    for c in candidates:
+        cid = getattr(c, "chunk_id", str(c))
+        score = getattr(c, "score", 0.0)
+        method = getattr(c, "retrieval_method", "")
+        cand_items.append(f"{cid}:{score:.4f}:{method}")
+    cand_str = "|".join(cand_items)
+    payload = f"{task_id}:{query.strip()}:{scopes_str}:{retrieval_policy_version}:{processing_version}:{cand_str}:{ev_str}".encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
 
 
@@ -441,3 +493,128 @@ class EvidenceSnapshot(BaseModel):
             content_fingerprint=fp,
             created_at=ts,
         )
+
+
+class KnowledgeChunk(BaseModel):
+    """An immutable, deterministic chunk of parsed source knowledge."""
+    model_config = ConfigDict(frozen=True)
+
+    chunk_id: str
+    source_document_id: str
+    processing_version: str = "knowledge_processing_v1"
+    chunk_index: int
+    normalized_text: str
+    text_hash: str
+    locator: dict[str, Any] = Field(default_factory=dict)
+    content_fingerprint: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    @classmethod
+    def create(
+        cls,
+        source_document: SourceDocument,
+        normalized_text: str,
+        chunk_index: int,
+        locator: dict[str, Any] | EvidenceLocator | None = None,
+        processing_version: str = "knowledge_processing_v1",
+        chunk_id: str | None = None,
+        now: datetime | None = None,
+    ) -> KnowledgeChunk:
+        ts = now or datetime.now(UTC)
+        loc_dict: dict[str, Any]
+        if isinstance(locator, EvidenceLocator):
+            loc_dict = locator.to_dict()
+        elif isinstance(locator, dict):
+            loc_dict = locator
+        else:
+            loc_dict = {}
+
+        t_hash = compute_sha256(normalized_text)
+        cid = chunk_id or compute_chunk_id(
+            source_fingerprint=source_document.source_fingerprint,
+            processing_version=processing_version,
+            locator=loc_dict,
+            normalized_text=normalized_text,
+        )
+        fp = compute_sha256(f"{cid}:{source_document.source_document_id}:{processing_version}:{chunk_index}:{t_hash}")
+        return cls(
+            chunk_id=cid,
+            source_document_id=source_document.source_document_id,
+            processing_version=processing_version,
+            chunk_index=chunk_index,
+            normalized_text=normalized_text,
+            text_hash=t_hash,
+            locator=loc_dict,
+            content_fingerprint=fp,
+            created_at=ts,
+        )
+
+
+class RetrievalCandidate(BaseModel):
+    """A scored and ranked candidate chunk returned during retrieval."""
+    model_config = ConfigDict(frozen=True)
+
+    rank: int
+    chunk_id: str
+    source_document_id: str
+    score: float
+    retrieval_method: str = "LEXICAL_BM25"
+    locator: dict[str, Any] = Field(default_factory=dict)
+    excerpt: str
+
+
+class RetrievalSnapshot(BaseModel):
+    """An immutable, frozen record of a retrieval execution and candidate ranking."""
+    model_config = ConfigDict(frozen=True)
+
+    retrieval_snapshot_id: str
+    task_id: str
+    query: str
+    source_scope_ids: tuple[str, ...] = Field(default_factory=tuple)
+    retrieval_policy_version: str = "lexical_bm25_v1"
+    processing_version: str = "knowledge_processing_v1"
+    candidates: tuple[RetrievalCandidate, ...] = Field(default_factory=tuple)
+    selected_evidence_ids: tuple[str, ...] = Field(default_factory=tuple)
+    content_fingerprint: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    @classmethod
+    def create(
+        cls,
+        task_id: str,
+        query: str,
+        source_scope_ids: Sequence[str],
+        candidates: Sequence[RetrievalCandidate],
+        selected_evidence_ids: Sequence[str] = (),
+        retrieval_policy_version: str = "lexical_bm25_v1",
+        processing_version: str = "knowledge_processing_v1",
+        retrieval_snapshot_id: str | None = None,
+        now: datetime | None = None,
+    ) -> RetrievalSnapshot:
+        ts = now or datetime.now(UTC)
+        sorted_scopes = tuple(sorted(set(source_scope_ids)))
+        cands_tuple = tuple(candidates)
+        sel_ev_tuple = tuple(selected_evidence_ids)
+
+        fp = compute_retrieval_snapshot_fingerprint(
+            task_id=task_id,
+            query=query,
+            source_scope_ids=sorted_scopes,
+            retrieval_policy_version=retrieval_policy_version,
+            processing_version=processing_version,
+            candidates=cands_tuple,
+            selected_evidence_ids=sel_ev_tuple,
+        )
+        return cls(
+            retrieval_snapshot_id=retrieval_snapshot_id or f"rs_{uuid4().hex[:24]}",
+            task_id=task_id,
+            query=query,
+            source_scope_ids=sorted_scopes,
+            retrieval_policy_version=retrieval_policy_version,
+            processing_version=processing_version,
+            candidates=cands_tuple,
+            selected_evidence_ids=sel_ev_tuple,
+            content_fingerprint=fp,
+            created_at=ts,
+        )
+

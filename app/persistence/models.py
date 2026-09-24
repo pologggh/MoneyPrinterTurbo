@@ -1261,11 +1261,51 @@ class EvidenceSnapshotORM(Base):
     )
 
 
+class KnowledgeChunkORM(Base):
+    __tablename__ = "knowledge_chunks"
+
+    chunk_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    source_document_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("source_documents.source_document_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    processing_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    normalized_text: Mapped[str] = mapped_column(Text, nullable=False)
+    text_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    locator_json: Mapped[dict] = mapped_column(EvidenceType, nullable=False, default=dict)
+    content_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        Index("ix_knowledge_chunks_source_document_id", "source_document_id"),
+        Index("ix_knowledge_chunks_content_fingerprint", "content_fingerprint"),
+        Index("ix_knowledge_chunks_created_at", "created_at"),
+        UniqueConstraint("source_document_id", "processing_version", "chunk_index", name="uq_knowledge_chunks_source_ver_idx"),
+    )
 
 
+class RetrievalSnapshotORM(Base):
+    __tablename__ = "retrieval_snapshots"
 
+    retrieval_snapshot_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    task_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("knowledge_video_tasks.task_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    query: Mapped[str] = mapped_column(Text, nullable=False)
+    source_scope_ids_json: Mapped[list] = mapped_column(EvidenceType, nullable=False, default=list)
+    retrieval_policy_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    processing_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    candidates_json: Mapped[list] = mapped_column(EvidenceType, nullable=False, default=list)
+    selected_evidence_ids_json: Mapped[list] = mapped_column(EvidenceType, nullable=False, default=list)
+    content_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
-
-
-
-
+    __table_args__ = (
+        Index("ix_retrieval_snapshots_task_id", "task_id"),
+        Index("ix_retrieval_snapshots_content_fingerprint", "content_fingerprint"),
+        Index("ix_retrieval_snapshots_created_at", "created_at"),
+    )

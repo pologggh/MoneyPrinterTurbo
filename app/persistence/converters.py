@@ -1679,10 +1679,76 @@ def evidence_snapshot_from_orm(orm: Any) -> Any:
     )
 
 
+def knowledge_chunk_to_orm(chunk: Any) -> Any:
+    """Converts a domain KnowledgeChunk to a KnowledgeChunkORM record."""
+    from app.persistence.models import KnowledgeChunkORM
+
+    return KnowledgeChunkORM(
+        chunk_id=chunk.chunk_id,
+        source_document_id=chunk.source_document_id,
+        processing_version=chunk.processing_version,
+        chunk_index=chunk.chunk_index,
+        normalized_text=chunk.normalized_text,
+        text_hash=chunk.text_hash,
+        locator_json=chunk.locator,
+        content_fingerprint=chunk.content_fingerprint,
+        created_at=chunk.created_at,
+    )
 
 
+def knowledge_chunk_from_orm(orm: Any) -> Any:
+    """Reconstructs a domain KnowledgeChunk from a KnowledgeChunkORM record."""
+    from app.domain.evidence import KnowledgeChunk
+
+    return KnowledgeChunk(
+        chunk_id=orm.chunk_id,
+        source_document_id=orm.source_document_id,
+        processing_version=orm.processing_version,
+        chunk_index=orm.chunk_index,
+        normalized_text=orm.normalized_text,
+        text_hash=orm.text_hash,
+        locator=orm.locator_json or {},
+        content_fingerprint=orm.content_fingerprint,
+        created_at=orm.created_at,
+    )
 
 
+def retrieval_snapshot_to_orm(snapshot: Any) -> Any:
+    """Converts a domain RetrievalSnapshot to a RetrievalSnapshotORM record."""
+    from app.persistence.models import RetrievalSnapshotORM
+
+    candidates_list = [c.model_dump() if hasattr(c, "model_dump") else c for c in snapshot.candidates]
+    return RetrievalSnapshotORM(
+        retrieval_snapshot_id=snapshot.retrieval_snapshot_id,
+        task_id=snapshot.task_id,
+        query=snapshot.query,
+        source_scope_ids_json=list(snapshot.source_scope_ids),
+        retrieval_policy_version=snapshot.retrieval_policy_version,
+        processing_version=snapshot.processing_version,
+        candidates_json=candidates_list,
+        selected_evidence_ids_json=list(snapshot.selected_evidence_ids),
+        content_fingerprint=snapshot.content_fingerprint,
+        created_at=snapshot.created_at,
+    )
 
 
+def retrieval_snapshot_from_orm(orm: Any) -> Any:
+    """Reconstructs a domain RetrievalSnapshot from a RetrievalSnapshotORM record."""
+    from app.domain.evidence import RetrievalCandidate, RetrievalSnapshot
 
+    candidates = [
+        RetrievalCandidate.model_validate(c) if isinstance(c, dict) else c
+        for c in (orm.candidates_json or [])
+    ]
+    return RetrievalSnapshot(
+        retrieval_snapshot_id=orm.retrieval_snapshot_id,
+        task_id=orm.task_id,
+        query=orm.query,
+        source_scope_ids=tuple(orm.source_scope_ids_json or []),
+        retrieval_policy_version=orm.retrieval_policy_version,
+        processing_version=orm.processing_version,
+        candidates=tuple(candidates),
+        selected_evidence_ids=tuple(orm.selected_evidence_ids_json or []),
+        content_fingerprint=orm.content_fingerprint,
+        created_at=orm.created_at,
+    )

@@ -7,11 +7,17 @@ from loguru import logger
 from pydantic import BaseModel, Field
 
 from app.application.evidence_service import TaskEvidenceCommandService
+from app.application.knowledge_retrieval_service import (
+    KnowledgeProcessingService,
+    KnowledgeRetrievalService,
+)
 from app.application.task_command_service import TaskCommandService
 from app.application.task_query_service import TaskQueryService
 from app.controllers import base
 from app.controllers.v1.base import new_router
 from app.domain.evidence import (
+    EvidenceDomainError,
+    EvidenceNotFoundError,
     SourceDocument,
     SourceStatus,
     SourceType,
@@ -23,6 +29,7 @@ from app.domain.workflow_state import (
     WorkflowConflictError,
     WorkflowPolicyType,
 )
+from app.persistence.repositories import EvidenceRepository
 from app.persistence.session import get_session
 from app.utils import utils
 
@@ -301,4 +308,136 @@ def register_evidence(task_id: str, body: RegisterEvidenceRequest):
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except UnsupportedSourceTypeError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+class ProcessKnowledgeRequest(BaseModel):
+    source_document_id: str | None = Field(
+        default=None,
+        description="Optional specific source to process. If omitted, processes all registered sources for task.",
+    )
+
+
+class RetrieveKnowledgeRequest(BaseModel):
+    query: str = Field(..., min_length=1, description="Search query")
+    top_k: int = Field(default=10, ge=1, le=50, description="Max candidate chunks to return")
+    source_scope_ids: list[str] | None = Field(
+        default=None,
+        description="Optional restrict retrieval to specific source document IDs",
+    )
+
+
+@router.post(
+    "/knowledge-video-tasks/{task_id}/knowledge/process",
+    summary="Parse and chunk registered evidence sources for a task",
+)
+def process_knowledge(task_id: str, body: ProcessKnowledgeRequest | None = None):
+    with get_session() as session:
+        proc_service = KnowledgeProcessingService(session)
+        source_id = body.source_document_id if body else None
+        try:
+            if source_id:
+                chunks = proc_service.process_source_document(source_id)
+                data = {
+                    "task_id": task_id,
+                    "processed_sources": 1,
+                    "total_chunks": len(chunks),
+                }
+            else:
+                mapping = proc_service.process_sources_for_task(task_id)
+                total_chunks = sum(len(c) for c in mapping.values())
+                data = {
+                    "task_id": task_id,
+                    "processed_sources": len(mapping),
+                    "total_chunks": total_chunks,
+                }
+            return utils.get_response(200, data=data, message="Knowledge sources processed")
+        except EvidenceNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except EvidenceDomainError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post(
+    "/knowledge-video-tasks/{task_id}/knowledge/retrieve",
+    summary="Execute scoped lexical retrieval for a task",
+)
+def retrieve_knowledge(task_id: str, body: RetrieveKnowledgeRequest):
+    with get_session() as session:
+        retrieval_service = KnowledgeRetrievalService(session)
+        try:
+            snapshot = retrieval_service.retrieve(
+                task_id=task_id,
+                query=body.query,
+                top_k=body.top_k,
+                source_scope_ids=body.source_scope_ids,
+            )
+            return utils.get_response(
+                200,
+                data={
+                    "retrieval_snapshot_id": snapshot.retrieval_snapshot_id,
+                    "task_id": snapshot.task_id,
+                    "query": snapshot.query,
+                    "source_scope_ids": list(snapshot.source_scope_ids),
+                    "candidate_count": len(snapshot.candidates),
+                    "candidates": [c.model_dump() for c in snapshot.candidates],
+                    "selected_evidence_ids": list(snapshot.selected_evidence_ids),
+                    "content_fingerprint": snapshot.content_fingerprint,
+                    "created_at": snapshot.created_at.isoformat(),
+                },
+                message="Retrieval executed",
+            )
+        except ValueError as exc:
+            msg = str(exc)
+            if "not found" in msg.lower():
+                raise HTTPException(status_code=404, detail=msg) from exc
+            raise HTTPException(status_code=400, detail=msg) from exc
+        except EvidenceDomainError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get(
+    "/knowledge-video-tasks/{task_id}/knowledge/retrievals",
+    summary="List retrieval snapshots for a task",
+)
+def list_task_retrievals(task_id: str):
+    with get_session() as session:
+        ev_repo = EvidenceRepository(session)
+        snapshots = ev_repo.list_retrieval_snapshots_for_task(task_id)
+        data = [
+            {
+                "retrieval_snapshot_id": s.retrieval_snapshot_id,
+                "task_id": s.task_id,
+                "query": s.query,
+                "source_scope_ids": list(s.source_scope_ids),
+                "candidate_count": len(s.candidates),
+                "selected_evidence_ids": list(s.selected_evidence_ids),
+                "content_fingerprint": s.content_fingerprint,
+                "created_at": s.created_at.isoformat(),
+            }
+            for s in snapshots
+        ]
+        return utils.get_response(200, data=data, message="Retrieval snapshots listed")
+
+
+@router.get(
+    "/knowledge-video-tasks/{task_id}/knowledge/chunks",
+    summary="List knowledge chunks for a task",
+)
+def list_task_chunks(task_id: str):
+    with get_session() as session:
+        ev_repo = EvidenceRepository(session)
+        chunks = ev_repo.list_chunks_for_task(task_id)
+        data = [
+            {
+                "chunk_id": c.chunk_id,
+                "source_document_id": c.source_document_id,
+                "chunk_index": c.chunk_index,
+                "normalized_text": c.normalized_text,
+                "locator": c.locator,
+                "content_fingerprint": c.content_fingerprint,
+                "created_at": c.created_at.isoformat(),
+            }
+            for c in chunks
+        ]
+        return utils.get_response(200, data=data, message="Chunks listed")
 

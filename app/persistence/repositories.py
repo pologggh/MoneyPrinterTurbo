@@ -1767,13 +1767,109 @@ class EvidenceRepository:
         orm = self._session.scalars(stmt).first()
         return evidence_snapshot_from_orm(orm) if orm is not None else None
 
+    def save_knowledge_chunks(self, chunks: Sequence[KnowledgeChunk]) -> list[KnowledgeChunk]:
+        """Persists a sequence of KnowledgeChunk records idempotently."""
+        from app.persistence.converters import knowledge_chunk_from_orm, knowledge_chunk_to_orm
+        from app.persistence.models import KnowledgeChunkORM
 
+        saved: list[KnowledgeChunk] = []
+        for chunk in chunks:
+            orm = self._session.get(KnowledgeChunkORM, chunk.chunk_id)
+            if orm is None:
+                orm = knowledge_chunk_to_orm(chunk)
+                self._session.add(orm)
+            else:
+                orm.source_document_id = chunk.source_document_id
+                orm.processing_version = chunk.processing_version
+                orm.chunk_index = chunk.chunk_index
+                orm.normalized_text = chunk.normalized_text
+                orm.text_hash = chunk.text_hash
+                orm.locator_json = chunk.locator
+                orm.content_fingerprint = chunk.content_fingerprint
+            self._session.flush()
+            saved.append(knowledge_chunk_from_orm(orm))
+        return saved
 
+    def list_chunks_for_source(self, source_document_id: str) -> list[KnowledgeChunk]:
+        """Lists all chunks for a source document ordered by chunk_index."""
+        from app.persistence.converters import knowledge_chunk_from_orm
+        from app.persistence.models import KnowledgeChunkORM
 
+        stmt = (
+            select(KnowledgeChunkORM)
+            .where(KnowledgeChunkORM.source_document_id == source_document_id)
+            .order_by(KnowledgeChunkORM.chunk_index.asc())
+        )
+        return [knowledge_chunk_from_orm(r) for r in self._session.scalars(stmt).all()]
 
+    def list_chunks_for_sources(self, source_document_ids: Sequence[str]) -> list[KnowledgeChunk]:
+        """Lists all chunks for multiple source documents ordered deterministically."""
+        if not source_document_ids:
+            return []
+        from app.persistence.converters import knowledge_chunk_from_orm
+        from app.persistence.models import KnowledgeChunkORM
 
+        stmt = (
+            select(KnowledgeChunkORM)
+            .where(KnowledgeChunkORM.source_document_id.in_(source_document_ids))
+            .order_by(KnowledgeChunkORM.source_document_id.asc(), KnowledgeChunkORM.chunk_index.asc())
+        )
+        return [knowledge_chunk_from_orm(r) for r in self._session.scalars(stmt).all()]
 
+    def list_chunks_for_task(self, task_id: str) -> list[KnowledgeChunk]:
+        """Lists all chunks for all sources associated with a task."""
+        from app.persistence.converters import knowledge_chunk_from_orm
+        from app.persistence.models import KnowledgeChunkORM, TaskSourceORM
 
+        stmt = (
+            select(KnowledgeChunkORM)
+            .join(
+                TaskSourceORM,
+                TaskSourceORM.source_document_id == KnowledgeChunkORM.source_document_id,
+            )
+            .where(TaskSourceORM.task_id == task_id)
+            .order_by(KnowledgeChunkORM.source_document_id.asc(), KnowledgeChunkORM.chunk_index.asc())
+        )
+        return [knowledge_chunk_from_orm(r) for r in self._session.scalars(stmt).all()]
 
+    def save_retrieval_snapshot(self, snapshot: RetrievalSnapshot) -> RetrievalSnapshot:
+        """Persists a frozen RetrievalSnapshot record."""
+        from app.persistence.converters import retrieval_snapshot_from_orm, retrieval_snapshot_to_orm
+        from app.persistence.models import RetrievalSnapshotORM
 
+        orm = self._session.get(RetrievalSnapshotORM, snapshot.retrieval_snapshot_id)
+        if orm is None:
+            orm = retrieval_snapshot_to_orm(snapshot)
+            self._session.add(orm)
+        else:
+            orm.task_id = snapshot.task_id
+            orm.query = snapshot.query
+            orm.source_scope_ids_json = list(snapshot.source_scope_ids)
+            orm.retrieval_policy_version = snapshot.retrieval_policy_version
+            orm.processing_version = snapshot.processing_version
+            orm.candidates_json = [c.model_dump() if hasattr(c, "model_dump") else c for c in snapshot.candidates]
+            orm.selected_evidence_ids_json = list(snapshot.selected_evidence_ids)
+            orm.content_fingerprint = snapshot.content_fingerprint
+        self._session.flush()
+        return retrieval_snapshot_from_orm(orm)
+
+    def get_retrieval_snapshot(self, snapshot_id: str) -> RetrievalSnapshot | None:
+        """Loads a frozen RetrievalSnapshot by ID."""
+        from app.persistence.converters import retrieval_snapshot_from_orm
+        from app.persistence.models import RetrievalSnapshotORM
+
+        orm = self._session.get(RetrievalSnapshotORM, snapshot_id)
+        return retrieval_snapshot_from_orm(orm) if orm is not None else None
+
+    def list_retrieval_snapshots_for_task(self, task_id: str) -> list[RetrievalSnapshot]:
+        """Lists all retrieval snapshots executed for a task."""
+        from app.persistence.converters import retrieval_snapshot_from_orm
+        from app.persistence.models import RetrievalSnapshotORM
+
+        stmt = (
+            select(RetrievalSnapshotORM)
+            .where(RetrievalSnapshotORM.task_id == task_id)
+            .order_by(RetrievalSnapshotORM.created_at.desc())
+        )
+        return [retrieval_snapshot_from_orm(r) for r in self._session.scalars(stmt).all()]
 
