@@ -377,14 +377,13 @@ def _setup_full_prerequisites(session_factory, tmp_path, shot_count: int = 2):
 
 
 def test_composition_stage_executor_registered_in_default_registry():
-    """Verify Stage.COMPOSITION is registered and Stage.QUALITY_REVIEW remains unregistered."""
+    """Verify Stage.COMPOSITION and QUALITY_REVIEW are registered, and Stage.DELIVERY remains unregistered."""
     registry = get_default_executor_registry()
     assert registry.has_executor(Stage.COMPOSITION)
     assert isinstance(registry.get_executor(Stage.COMPOSITION), CompositionStageExecutor)
+    assert registry.has_executor(Stage.QUALITY_REVIEW)
 
-    # Downstream boundary: QUALITY_REVIEW and DELIVERY must remain unsupported
-    assert not registry.has_executor(Stage.QUALITY_REVIEW)
-    assert registry.get_executor(Stage.QUALITY_REVIEW) is None
+    # Downstream boundary: DELIVERY must remain unsupported
     assert not registry.has_executor(Stage.DELIVERY)
     assert registry.get_executor(Stage.DELIVERY) is None
 
@@ -994,10 +993,12 @@ def test_mandatory_stageworker_advances_composition_to_queued_quality_review(ses
         assert qr_jobs[0].status == JobStatus.QUEUED
         assert qr_jobs[0].input_task_artifact_ref_id == comp_ref.task_artifact_ref_id
 
-    # 3. Worker runs again with production registry (which has NO executor for QUALITY_REVIEW)
+    # 3. Worker without QUALITY_REVIEW executor must NOT lease QUALITY_REVIEW
+    no_qr_registry = StageExecutorRegistry()
+    no_qr_registry.register(Stage.COMPOSITION, comp_executor)
     prod_worker = StageWorker(
         session_factory=session_factory,
-        registry=get_default_executor_registry(session_factory=session_factory),
+        registry=no_qr_registry,
         worker_id="prod-worker-2",
     )
     # Must NOT process QUALITY_REVIEW

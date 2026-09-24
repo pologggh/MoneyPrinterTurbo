@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Sequence
 
 from sqlalchemy import select
@@ -1551,7 +1551,7 @@ class TaskArtifactRepository:
 
     def save_artifact_ref(self, ref: TaskArtifactRef) -> TaskArtifactRef:
         orm = task_artifact_ref_to_orm(ref)
-        self._session.add(orm)
+        orm = self._session.merge(orm)
         self._session.flush()
         return task_artifact_ref_from_orm(orm)
 
@@ -1591,6 +1591,81 @@ class TaskArtifactRepository:
         stmt = stmt.order_by(TaskArtifactRefORM.created_at.desc()).limit(1)
         orm = self._session.scalars(stmt).first()
         return task_artifact_ref_from_orm(orm) if orm is not None else None
+
+    def mark_artifact_stale(
+        self,
+        task_artifact_ref_id: str,
+        reason: str = "",
+        now: datetime | None = None,
+    ) -> TaskArtifactRef | None:
+        """
+        Marks an existing task artifact reference as stale/superseded.
+        Does not mutate the immutable artifact payload itself.
+        """
+        orm = self._session.get(TaskArtifactRefORM, task_artifact_ref_id)
+        if orm is None:
+            return None
+        meta = dict(orm.metadata_json or {})
+        meta["is_current"] = False
+        meta["is_stale"] = True
+        meta["stale_reason"] = reason
+        meta["stale_at"] = (now or datetime.now(UTC)).isoformat()
+        orm.metadata_json = meta
+        self._session.flush()
+        return task_artifact_ref_from_orm(orm)
+
+    def get_current_artifact_ref(
+        self,
+        task_id: str,
+        stage: Stage | None = None,
+        artifact_type: ArtifactType | None = None,
+    ) -> TaskArtifactRef | None:
+        """
+        Returns the latest CURRENT (non-stale) artifact reference for the task.
+        """
+        stmt = select(TaskArtifactRefORM).where(TaskArtifactRefORM.task_id == task_id)
+        if stage is not None:
+            stage_val = stage.value if hasattr(stage, "value") else str(stage)
+            stmt = stmt.where(TaskArtifactRefORM.stage == stage_val)
+        if artifact_type is not None:
+            type_val = artifact_type.value if hasattr(artifact_type, "value") else str(artifact_type)
+            stmt = stmt.where(TaskArtifactRefORM.artifact_type == type_val)
+        stmt = stmt.order_by(TaskArtifactRefORM.created_at.desc())
+        all_orms = self._session.scalars(stmt).all()
+        for orm in all_orms:
+            ref = task_artifact_ref_from_orm(orm)
+            if ref.is_current and not ref.is_stale:
+                return ref
+        return None
+
+    def invalidate_downstream_artifacts(
+        self,
+        task_id: str,
+        stages: Sequence[Stage],
+        reason: str = "",
+        now: datetime | None = None,
+    ) -> list[TaskArtifactRef]:
+        """
+        Marks all current artifacts for the specified downstream stages as stale/superseded.
+        Historical artifacts remain queryable.
+        """
+        invalidated: list[TaskArtifactRef] = []
+        for stg in stages:
+            stg_val = stg.value if hasattr(stg, "value") else str(stg)
+            stmt = (
+                select(TaskArtifactRefORM)
+                .where(
+                    TaskArtifactRefORM.task_id == task_id,
+                    TaskArtifactRefORM.stage == stg_val,
+                )
+            )
+            for orm in self._session.scalars(stmt).all():
+                ref = task_artifact_ref_from_orm(orm)
+                if ref.is_current and not ref.is_stale:
+                    updated = self.mark_artifact_stale(ref.task_artifact_ref_id, reason=reason, now=now)
+                    if updated:
+                        invalidated.append(updated)
+        return invalidated
 
 
 class EvidenceRepository:

@@ -273,13 +273,14 @@ def test_production_registry_contains_evidence_plan_script_and_no_mocks():
     assert registry.has_executor(Stage.SCRIPT)
     assert isinstance(registry.get_executor(Stage.SCRIPT), ScriptStageExecutor)
 
-    # PRODUCTION_PLAN, ASSET, AUDIO, and COMPOSITION are supported; QUALITY_REVIEW remains unsupported
+    # PRODUCTION_PLAN, ASSET, AUDIO, COMPOSITION, and QUALITY_REVIEW are supported; DELIVERY remains unsupported
     assert registry.has_executor(Stage.PRODUCTION_PLAN)
     assert registry.has_executor(Stage.ASSET)
     assert registry.has_executor(Stage.AUDIO)
     assert registry.has_executor(Stage.COMPOSITION)
-    assert not registry.has_executor(Stage.QUALITY_REVIEW)
-    assert registry.get_executor(Stage.QUALITY_REVIEW) is None
+    assert registry.has_executor(Stage.QUALITY_REVIEW)
+    assert not registry.has_executor(Stage.DELIVERY)
+    assert registry.get_executor(Stage.DELIVERY) is None
 
 
 def test_unsupported_storyboard_remains_queued_in_default_registry(session_factory):
@@ -303,10 +304,11 @@ def test_unsupported_storyboard_remains_queued_in_default_registry(session_facto
         task.advance_stage(Stage.AUDIO)
         task.advance_stage(Stage.COMPOSITION)
         task.advance_stage(Stage.QUALITY_REVIEW)
+        task.advance_stage(Stage.DELIVERY)
         job = WorkflowJob.create(
             task_id=task_id,
-            stage=Stage.QUALITY_REVIEW,
-            idempotency_key=f"idemp_{task_id}_quality_review_1",
+            stage=Stage.DELIVERY,
+            idempotency_key=f"idemp_{task_id}_delivery_1",
         )
         task_repo.save_task(task)
         job_repo.create_job(job)
@@ -328,7 +330,7 @@ def test_unsupported_storyboard_remains_queued_in_default_registry(session_facto
 
         assert cur_job.status == JobStatus.QUEUED
         assert cur_job.lease_owner is None
-        assert cur_task.current_stage == Stage.QUALITY_REVIEW
+        assert cur_task.current_stage == Stage.DELIVERY
 
 
 # =============================================================================

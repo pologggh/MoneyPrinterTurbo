@@ -165,3 +165,15 @@ class KnowledgeVideoTask(BaseModel):
 
         self.current_stage = new_stage
         self.updated_at = ts
+
+    def set_stage_for_rerun(self, new_stage: Stage, now: datetime | None = None) -> None:
+        """
+        Sets stage for partial rerun or skipped stage transition during remediation.
+        """
+        ts = now or datetime.now(UTC)
+        if self.task_status.is_terminal:
+            raise TerminalStateImmutableError(
+                f"Cannot change stage: task '{self.task_id}' is in terminal state '{self.task_status}'."
+            )
+        self.current_stage = new_stage
+        self.updated_at = ts

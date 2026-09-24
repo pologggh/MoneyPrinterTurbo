@@ -507,10 +507,10 @@ def test_production_registry_contains_production_plan_and_asset():
 
 
 def test_production_registry_leaves_subsequent_stages_unsupported():
-    """Verify QUALITY_REVIEW and DELIVERY remain unsupported in default registry."""
+    """Verify DELIVERY remains unsupported in default registry."""
     registry = get_default_executor_registry()
     assert registry.has_executor(Stage.COMPOSITION)
-    assert not registry.has_executor(Stage.QUALITY_REVIEW)
+    assert registry.has_executor(Stage.QUALITY_REVIEW)
     assert not registry.has_executor(Stage.DELIVERY)
 
 

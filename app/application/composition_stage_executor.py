@@ -355,9 +355,18 @@ class CompositionStageExecutor(StageExecutorProtocol):
             # -----------------------------------------------------------------
             # 2. Resolve & Validate Upstream ExecutionRun & StoryboardSnapshot
             # -----------------------------------------------------------------
-            run = exec_repo.get_execution_run(audio_output.execution_run_id)
+            # Resolve ExecutionRun: prefer latest current ExecutionRun if ASSET stage was rerun
+            latest_asset_ref = art_repo.get_current_artifact_ref(
+                task_id=task_id,
+                stage=Stage.ASSET,
+            )
+            run_id = audio_output.execution_run_id
+            if latest_asset_ref is not None and latest_asset_ref.artifact_id:
+                run_id = latest_asset_ref.artifact_id
+
+            run = exec_repo.get_execution_run(run_id)
             if run is None:
-                err = f"ExecutionRun '{audio_output.execution_run_id}' not found in database."
+                err = f"ExecutionRun '{run_id}' not found in database."
                 logger.error(f"[CompositionStageExecutor] {err}")
                 self._emit_trace(
                     task_id=task_id,

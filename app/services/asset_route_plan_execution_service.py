@@ -8,6 +8,7 @@ from typing import Any
 from uuid import uuid4
 
 from loguru import logger
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.domain.asset_execution import (
@@ -24,7 +25,13 @@ from app.domain.asset_execution import (
     ShotExecutionSummary,
 )
 from app.domain.asset_router import AssetRoutePlan
-from app.persistence.repositories import ExecutionRepository, ShotExecutionRepository
+from app.domain.evaluation import EvaluationDecision
+from app.persistence.models import EvaluationTargetORM
+from app.persistence.repositories import (
+    EvaluationRepository,
+    ExecutionRepository,
+    ShotExecutionRepository,
+)
 from app.persistence.session import get_session
 from app.services.asset_reuse_policy import AssetReusePolicy
 from app.services.shot_execution_service import ShotExecutionService
@@ -324,9 +331,24 @@ class AssetRoutePlanExecutionService:
         # 1. Fetch historical candidate asset versions in short DB transaction
         with self._session_scope() as session:
             exec_repo = ExecutionRepository(session)
-            candidate_versions = exec_repo.list_asset_versions_for_shot_revision(
+            eval_repo = EvaluationRepository(session)
+            raw_candidates = exec_repo.list_asset_versions_for_shot_revision(
                 entry.shot_revision_id
             )
+            candidate_versions = []
+            for cv in raw_candidates:
+                stmt = select(EvaluationTargetORM).where(
+                    EvaluationTargetORM.shot_asset_version_id == cv.shot_asset_version_id
+                )
+                targets = session.scalars(stmt).all()
+                has_failed = False
+                for t in targets:
+                    snaps = eval_repo.list_snapshots_for_target(t.evaluation_target_id)
+                    if any(s.decision != EvaluationDecision.PASS for s in snaps):
+                        has_failed = True
+                        break
+                if not has_failed:
+                    candidate_versions.append(cv)
 
         # 2. Evaluate technical compatibility for reuse
         expected_gen_mode = (

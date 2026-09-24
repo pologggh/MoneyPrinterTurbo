@@ -348,16 +348,17 @@ def setup_complete_upstream_pipeline(session, task_id: str, tmp_path: Path, targ
 # Registry Verification
 # =============================================================================
 
-def test_registry_contains_audio_executor_and_leaves_composition_unsupported():
-    """Verify default registry includes Stage.AUDIO and Stage.COMPOSITION while QUALITY_REVIEW remains unsupported."""
+def test_registry_contains_audio_executor_and_leaves_delivery_unsupported():
+    """Verify default registry includes Stage.AUDIO, COMPOSITION, and QUALITY_REVIEW while DELIVERY remains unsupported."""
     registry = get_default_executor_registry()
     assert registry.has_executor(Stage.AUDIO)
     assert isinstance(registry.get_executor(Stage.AUDIO), AudioStageExecutor)
     assert registry.has_executor(Stage.COMPOSITION)
+    assert registry.has_executor(Stage.QUALITY_REVIEW)
 
-    # Stage.QUALITY_REVIEW remains unregistered
-    assert not registry.has_executor(Stage.QUALITY_REVIEW)
-    assert registry.get_executor(Stage.QUALITY_REVIEW) is None
+    # Stage.DELIVERY remains unregistered
+    assert not registry.has_executor(Stage.DELIVERY)
+    assert registry.get_executor(Stage.DELIVERY) is None
 
 
 # =============================================================================

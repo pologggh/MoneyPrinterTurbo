@@ -250,4 +250,5 @@ def test_evidence_stage_executor_is_registered_in_stage_e3():
     assert executor is not None
     assert isinstance(executor, EvidenceStageExecutor)
     assert registry.get_executor(Stage.COMPOSITION) is not None
-    assert registry.get_executor(Stage.QUALITY_REVIEW) is None
+    assert registry.get_executor(Stage.QUALITY_REVIEW) is not None
+    assert registry.get_executor(Stage.DELIVERY) is None

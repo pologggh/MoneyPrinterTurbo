@@ -2,13 +2,19 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from typing import Any
+from uuid import uuid4
+
+from loguru import logger
 from sqlalchemy.orm import Session
 
 from app.application.workflow_policy import WorkflowPolicy
 from app.domain.enums import StoryboardSnapshotState
 from app.domain.knowledge_video_task import KnowledgeVideoTask
+from app.domain.quality_remediation import QualityRemediationAction
 from app.domain.storyboard_approval import StoryboardApprovalService
 from app.domain.task_artifact import ArtifactType, TaskArtifactRef
+from app.domain.trace import TraceEventType
 from app.domain.workflow_job import WorkflowJob
 from app.domain.workflow_state import (
     JobErrorType,
@@ -18,6 +24,7 @@ from app.domain.workflow_state import (
     get_next_stage,
 )
 from app.persistence.repositories import (
+    AssetRoutePlanRepository,
     ContentPlanRepository,
     KnowledgeVideoTaskRepository,
     ShotRepository,
@@ -36,12 +43,32 @@ class KnowledgeVideoWorkflow:
     Single engine shared by both AUTO and REVIEW execution policies.
     """
 
-    def __init__(self, session: Session) -> None:
+    def __init__(self, session: Session, trace_writer: Any | None = None) -> None:
         self._session = session
+        self.trace_writer = trace_writer
         self.task_repo = KnowledgeVideoTaskRepository(session)
         self.job_repo = WorkflowJobRepository(session)
         self.exec_repo = StageExecutionRepository(session)
         self.artifact_repo = TaskArtifactRepository(session)
+
+    def _emit_trace(
+        self,
+        task_id: str,
+        event_type: TraceEventType,
+        attributes: dict[str, Any],
+    ) -> None:
+        if self.trace_writer is None:
+            return
+        try:
+            self.trace_writer.write_event(
+                task_id=task_id,
+                event_type=event_type,
+                attributes=attributes,
+            )
+        except Exception as exc:
+            logger.warning(
+                f"[KnowledgeVideoWorkflow] Failed to emit trace event {event_type}: {exc}"
+            )
 
     def on_stage_completed(
         self,
@@ -61,6 +88,31 @@ class KnowledgeVideoWorkflow:
             self.task_repo.save_task(task)
             return None
 
+        # Special handling for QUALITY_REVIEW
+        if completed_job.stage == Stage.QUALITY_REVIEW:
+            output_ref = None
+            if completed_job.output_task_artifact_ref_id:
+                output_ref = self.artifact_repo.get_artifact_ref(completed_job.output_task_artifact_ref_id)
+            if output_ref is None:
+                output_ref = self.artifact_repo.get_latest_artifact_ref(task.task_id, stage=Stage.QUALITY_REVIEW)
+
+            meta = output_ref.metadata_json if output_ref and output_ref.metadata_json else {}
+            decision = meta.get("decision", "PASS")
+            if decision == "FAIL":
+                return self._handle_quality_remediation(task, completed_job, meta, now=ts)
+            else:
+                if task.task_metadata.get("is_partial_rerun"):
+                    self._emit_trace(
+                        task_id=task.task_id,
+                        event_type=TraceEventType.PARTIAL_RERUN_COMPLETED,
+                        attributes={
+                            "task_id": task.task_id,
+                            "completed_job_id": completed_job.job_id,
+                        },
+                    )
+                    task.task_metadata["is_partial_rerun"] = False
+                    self.task_repo.save_task(task)
+
         # 2. Check workflow policy for review checkpoints
         policy = WorkflowPolicy(policy_type=task.workflow_policy)
         if policy.should_pause_for_review(completed_job.stage):
@@ -74,13 +126,25 @@ class KnowledgeVideoWorkflow:
 
         # 3. Advance to the next stage
         next_stage = get_next_stage(completed_job.stage)
+        output_ref_id = completed_job.output_task_artifact_ref_id
+
+        # If completed stage was ASSET during partial rerun (valid AudioOutput exists), skip AUDIO and proceed directly to COMPOSITION
+        if completed_job.stage == Stage.ASSET:
+            current_audio_ref = self.artifact_repo.get_current_artifact_ref(
+                task_id=task.task_id,
+                stage=Stage.AUDIO,
+                artifact_type=ArtifactType.AUDIO_OUTPUT,
+            )
+            if current_audio_ref is not None and not current_audio_ref.is_stale:
+                next_stage = Stage.COMPOSITION
+                output_ref_id = current_audio_ref.task_artifact_ref_id
+
         if next_stage is None:
             task.transition_to(TaskStatus.COMPLETED, now=ts)
             self.task_repo.save_task(task)
             return None
 
         # If completed stage was STORYBOARD under AUTO, invoke domain Storyboard approval automatically
-        output_ref_id = completed_job.output_task_artifact_ref_id
         if completed_job.stage == Stage.STORYBOARD:
             output_ref_id = self._approve_storyboard_for_task(
                 task_id=task.task_id,
@@ -89,7 +153,11 @@ class KnowledgeVideoWorkflow:
                 now=ts,
             )
 
-        task.advance_stage(next_stage)
+        if next_stage == get_next_stage(task.current_stage):
+            task.advance_stage(next_stage, now=ts)
+        else:
+            task.set_stage_for_rerun(next_stage, now=ts)
+
         if task.task_status != TaskStatus.RUNNING:
             task.transition_to(TaskStatus.RUNNING, now=ts)
         self.task_repo.save_task(task)
@@ -111,6 +179,182 @@ class KnowledgeVideoWorkflow:
             now=ts,
         )
         return self.job_repo.create_job(next_job)
+
+    def _handle_quality_remediation(
+        self,
+        task: KnowledgeVideoTask,
+        completed_job: WorkflowJob,
+        meta: dict[str, Any],
+        now: datetime | None = None,
+    ) -> WorkflowJob | None:
+        """
+        Handles deterministic quality remediation based on evaluation results and remediation policy.
+        """
+        ts = now or datetime.now(UTC)
+        action_str = meta.get("remediation_action")
+        affected_shot_ids = meta.get("affected_shot_ids", [])
+        remed_id = meta.get("remediation_decision_id")
+        eval_snap_id = meta.get("evaluation_snapshot_id")
+        reason_codes = meta.get("reason_codes", [])
+
+        # Check for exhaustion or needs user action / replan
+        if action_str in (
+            QualityRemediationAction.NEEDS_USER_ACTION.value,
+            QualityRemediationAction.CONTROLLED_VISUAL_REPLAN.value,
+        ) or any("EXHAUSTED" in str(r) for r in reason_codes):
+            if any("EXHAUSTED" in str(r) for r in reason_codes):
+                self._emit_trace(
+                    task_id=task.task_id,
+                    event_type=TraceEventType.QUALITY_REVIEW_EXHAUSTED,
+                    attributes={
+                        "task_id": task.task_id,
+                        "remediation_decision_id": remed_id,
+                        "reason_codes": reason_codes,
+                    },
+                )
+            reason = (
+                "Controlled visual replan required"
+                if action_str == QualityRemediationAction.CONTROLLED_VISUAL_REPLAN.value
+                else f"Quality remediation requires user action: {reason_codes or action_str}"
+            )
+            task.transition_to(
+                TaskStatus.WAITING_USER,
+                reason=reason,
+                now=ts,
+            )
+            self.task_repo.save_task(task)
+            return None
+
+        if action_str == QualityRemediationAction.RETRY_EVALUATION.value:
+            task.task_metadata["is_partial_rerun"] = True
+            self._emit_trace(
+                task_id=task.task_id,
+                event_type=TraceEventType.PARTIAL_RERUN_STARTED,
+                attributes={
+                    "task_id": task.task_id,
+                    "action": action_str,
+                    "evaluation_snapshot_id": eval_snap_id,
+                },
+            )
+            self.task_repo.save_task(task)
+
+            seq = 1
+            idempotency_key = f"idemp_{task.task_id}_quality_review_{seq}"
+            while self.job_repo.get_job_by_idempotency_key(idempotency_key) is not None:
+                seq += 1
+                idempotency_key = f"idemp_{task.task_id}_quality_review_{seq}"
+
+            next_job = WorkflowJob.create(
+                task_id=task.task_id,
+                stage=Stage.QUALITY_REVIEW,
+                idempotency_key=idempotency_key,
+                attempt_number=1,
+                input_task_artifact_ref_id=completed_job.input_task_artifact_ref_id,
+                now=ts,
+            )
+            return self.job_repo.create_job(next_job)
+
+        if action_str in (
+            QualityRemediationAction.REGENERATE_SAME_ROUTE.value,
+            QualityRemediationAction.FALLBACK_NEXT_ROUTE_CANDIDATE.value,
+        ):
+            # Invalidate downstream artifacts: COMPOSITION, QUALITY_REVIEW, DELIVERY
+            self.artifact_repo.invalidate_downstream_artifacts(
+                task_id=task.task_id,
+                stages=[Stage.COMPOSITION, Stage.QUALITY_REVIEW, Stage.DELIVERY],
+                reason=f"Quality remediation: {action_str}",
+                now=ts,
+            )
+
+            task.task_metadata["is_partial_rerun"] = True
+            task.set_stage_for_rerun(Stage.ASSET, now=ts)
+            self.task_repo.save_task(task)
+
+            self._emit_trace(
+                task_id=task.task_id,
+                event_type=TraceEventType.PARTIAL_RERUN_STARTED,
+                attributes={
+                    "task_id": task.task_id,
+                    "action": action_str,
+                    "affected_shot_ids": affected_shot_ids,
+                    "remediation_decision_id": remed_id,
+                },
+            )
+
+            input_ref_id = None
+            if action_str == QualityRemediationAction.FALLBACK_NEXT_ROUTE_CANDIDATE.value:
+                candidate_dict = meta.get("selected_route_candidate")
+                route_plan_repo = AssetRoutePlanRepository(self._session)
+                current_plan_ref = self.artifact_repo.get_latest_artifact_ref(
+                    task_id=task.task_id,
+                    stage=Stage.PRODUCTION_PLAN,
+                    artifact_type=ArtifactType.ASSET_ROUTE_PLAN,
+                )
+                if current_plan_ref is not None:
+                    curr_plan = route_plan_repo.get_route_plan(current_plan_ref.artifact_id)
+                    if curr_plan is not None and candidate_dict:
+                        from app.domain.asset_router import AssetRouteCandidate
+                        candidate_b = AssetRouteCandidate.model_validate(candidate_dict)
+                        new_entries = []
+                        for entry in curr_plan.shot_routes:
+                            if entry.shot_id in affected_shot_ids:
+                                updated_decision = entry.route_decision.model_copy(
+                                    update={"selected_candidate": candidate_b}
+                                )
+                                updated_entry = entry.model_copy(
+                                    update={"route_decision": updated_decision}
+                                )
+                                new_entries.append(updated_entry)
+                            else:
+                                new_entries.append(entry)
+                        new_plan = curr_plan.model_copy(
+                            update={
+                                "asset_route_plan_id": str(uuid4()),
+                                "shot_routes": tuple(new_entries),
+                                "created_at": ts,
+                            }
+                        )
+                        route_plan_repo.add_route_plan(new_plan)
+                        new_plan_ref = TaskArtifactRef.create(
+                            task_id=task.task_id,
+                            stage=Stage.PRODUCTION_PLAN,
+                            artifact_type=ArtifactType.ASSET_ROUTE_PLAN,
+                            artifact_id=new_plan.asset_route_plan_id,
+                            metadata_json={
+                                "fallback_from_route_plan_id": curr_plan.asset_route_plan_id,
+                                "remediation_decision_id": remed_id,
+                                "affected_shot_ids": affected_shot_ids,
+                            },
+                            now=ts,
+                        )
+                        saved_ref = self.artifact_repo.save_artifact_ref(new_plan_ref)
+                        input_ref_id = saved_ref.task_artifact_ref_id
+
+            if input_ref_id is None:
+                plan_ref = self.artifact_repo.get_latest_artifact_ref(
+                    task_id=task.task_id,
+                    stage=Stage.PRODUCTION_PLAN,
+                    artifact_type=ArtifactType.ASSET_ROUTE_PLAN,
+                )
+                input_ref_id = plan_ref.task_artifact_ref_id if plan_ref else None
+
+            seq = 1
+            idempotency_key = f"idemp_{task.task_id}_asset_{seq}"
+            while self.job_repo.get_job_by_idempotency_key(idempotency_key) is not None:
+                seq += 1
+                idempotency_key = f"idemp_{task.task_id}_asset_{seq}"
+
+            next_job = WorkflowJob.create(
+                task_id=task.task_id,
+                stage=Stage.ASSET,
+                idempotency_key=idempotency_key,
+                attempt_number=1,
+                input_task_artifact_ref_id=input_ref_id,
+                now=ts,
+            )
+            return self.job_repo.create_job(next_job)
+
+        return None
 
     def on_stage_failed(
         self,

@@ -26,6 +26,16 @@ class TaskArtifactRef(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     metadata_json: dict[str, Any] = Field(default_factory=dict)
 
+    @property
+    def is_current(self) -> bool:
+        """Indicates whether this artifact is the current authoritative result for its stage."""
+        return self.metadata_json.get("is_current", True)
+
+    @property
+    def is_stale(self) -> bool:
+        """Indicates whether this artifact has been superseded or invalidated by an upstream change."""
+        return self.metadata_json.get("is_stale", False) or not self.is_current
+
     @classmethod
     def create(
         cls,
