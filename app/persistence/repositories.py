@@ -27,6 +27,12 @@ from app.domain.evaluation import (
 )
 from app.domain.knowledge_video_task import KnowledgeVideoTask
 from app.domain.plan_diff import validate_content_plan_revision_lineages
+from app.domain.evidence import (
+    EvidenceItem,
+    EvidenceSnapshot,
+    KnowledgeClaim,
+    SourceDocument,
+)
 from app.domain.quality_remediation import (
     QualityRemediationDecision,
     ShotQualitySelection,
@@ -1567,6 +1573,200 @@ class TaskArtifactRepository:
         stmt = stmt.order_by(TaskArtifactRefORM.created_at.desc()).limit(1)
         orm = self._session.scalars(stmt).first()
         return task_artifact_ref_from_orm(orm) if orm is not None else None
+
+
+class EvidenceRepository:
+    """Repository for managing evidence sources, items, claims, and snapshots."""
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def save_source_document(self, doc: SourceDocument) -> SourceDocument:
+        from app.persistence.converters import source_document_from_orm, source_document_to_orm
+        from app.persistence.models import SourceDocumentORM
+
+        orm = self._session.get(SourceDocumentORM, doc.source_document_id)
+        if orm is None:
+            orm = source_document_to_orm(doc)
+            self._session.add(orm)
+        else:
+            orm.title = doc.title
+            orm.source_locator = doc.source_locator
+            orm.content_snapshot = doc.content_snapshot
+            orm.content_hash = doc.content_hash
+            orm.source_fingerprint = doc.source_fingerprint
+            orm.author = doc.author
+            orm.published_at = doc.published_at
+            orm.captured_at = doc.captured_at
+            orm.media_type = doc.media_type
+            orm.status = doc.status.value if hasattr(doc.status, "value") else str(doc.status)
+            orm.metadata_json = doc.metadata_json
+        self._session.flush()
+        return source_document_from_orm(orm)
+
+    def get_source_document(self, doc_id: str) -> SourceDocument | None:
+        from app.persistence.converters import source_document_from_orm
+        from app.persistence.models import SourceDocumentORM
+
+        orm = self._session.get(SourceDocumentORM, doc_id)
+        return source_document_from_orm(orm) if orm is not None else None
+
+    def associate_task_source(
+        self,
+        task_id: str,
+        source_document_id: str,
+        role: str = "PRIMARY",
+        now: datetime | None = None,
+    ) -> None:
+        from datetime import UTC
+        from uuid import uuid4
+        from app.persistence.models import TaskSourceORM
+
+        ts = now or datetime.now(UTC)
+        stmt = select(TaskSourceORM).where(
+            TaskSourceORM.task_id == task_id,
+            TaskSourceORM.source_document_id == source_document_id,
+        )
+        existing = self._session.scalars(stmt).first()
+        if existing is not None:
+            existing.role = role
+        else:
+            orm = TaskSourceORM(
+                task_source_id=uuid4().hex,
+                task_id=task_id,
+                source_document_id=source_document_id,
+                role=role,
+                associated_at=ts,
+            )
+            self._session.add(orm)
+        self._session.flush()
+
+    def list_sources_for_task(self, task_id: str) -> list[SourceDocument]:
+        from app.persistence.converters import source_document_from_orm
+        from app.persistence.models import SourceDocumentORM, TaskSourceORM
+
+        stmt = (
+            select(SourceDocumentORM)
+            .join(
+                TaskSourceORM,
+                TaskSourceORM.source_document_id == SourceDocumentORM.source_document_id,
+            )
+            .where(TaskSourceORM.task_id == task_id)
+            .order_by(TaskSourceORM.associated_at.asc())
+        )
+        return [source_document_from_orm(r) for r in self._session.scalars(stmt).all()]
+
+    def save_evidence_item(self, item: EvidenceItem) -> EvidenceItem:
+        from app.persistence.converters import evidence_item_from_orm, evidence_item_to_orm
+        from app.persistence.models import EvidenceItemORM
+
+        orm = self._session.get(EvidenceItemORM, item.evidence_id)
+        if orm is None:
+            orm = evidence_item_to_orm(item)
+            self._session.add(orm)
+        else:
+            orm.source_document_id = item.source_document_id
+            orm.locator_json = item.locator
+            orm.original_excerpt = item.original_excerpt
+            orm.normalized_fact = item.normalized_fact
+            orm.evidence_role = (
+                item.evidence_role.value
+                if hasattr(item.evidence_role, "value")
+                else str(item.evidence_role)
+            )
+            orm.confidence = item.confidence
+            orm.extraction_method = item.extraction_method
+            orm.content_hash = item.content_hash
+        self._session.flush()
+        return evidence_item_from_orm(orm)
+
+    def get_evidence_item(self, evidence_id: str) -> EvidenceItem | None:
+        from app.persistence.converters import evidence_item_from_orm
+        from app.persistence.models import EvidenceItemORM
+
+        orm = self._session.get(EvidenceItemORM, evidence_id)
+        return evidence_item_from_orm(orm) if orm is not None else None
+
+    def list_evidence_items_for_source(self, source_id: str) -> list[EvidenceItem]:
+        from app.persistence.converters import evidence_item_from_orm
+        from app.persistence.models import EvidenceItemORM
+
+        stmt = (
+            select(EvidenceItemORM)
+            .where(EvidenceItemORM.source_document_id == source_id)
+            .order_by(EvidenceItemORM.created_at.asc())
+        )
+        return [evidence_item_from_orm(r) for r in self._session.scalars(stmt).all()]
+
+    def save_knowledge_claim(self, claim: KnowledgeClaim) -> KnowledgeClaim:
+        from app.persistence.converters import knowledge_claim_from_orm, knowledge_claim_to_orm
+        from app.persistence.models import KnowledgeClaimORM
+
+        orm = self._session.get(KnowledgeClaimORM, claim.knowledge_claim_id)
+        if orm is None:
+            orm = knowledge_claim_to_orm(claim)
+            self._session.add(orm)
+        else:
+            orm.claim_type = claim.claim_type.value if hasattr(claim.claim_type, "value") else str(claim.claim_type)
+            orm.claim_text = claim.claim_text
+            orm.evidence_refs_json = list(claim.evidence_refs)
+            orm.verification_status = (
+                claim.verification_status.value
+                if hasattr(claim.verification_status, "value")
+                else str(claim.verification_status)
+            )
+            orm.conflict_evidence_refs_json = list(claim.conflict_evidence_refs)
+        self._session.flush()
+        return knowledge_claim_from_orm(orm)
+
+    def get_knowledge_claim(self, claim_id: str) -> KnowledgeClaim | None:
+        from app.persistence.converters import knowledge_claim_from_orm
+        from app.persistence.models import KnowledgeClaimORM
+
+        orm = self._session.get(KnowledgeClaimORM, claim_id)
+        return knowledge_claim_from_orm(orm) if orm is not None else None
+
+    def save_evidence_snapshot(self, snapshot: EvidenceSnapshot) -> EvidenceSnapshot:
+        from app.persistence.converters import evidence_snapshot_from_orm, evidence_snapshot_to_orm
+        from app.persistence.models import EvidenceSnapshotORM
+
+        orm = self._session.get(EvidenceSnapshotORM, snapshot.evidence_snapshot_id)
+        if orm is None:
+            orm = evidence_snapshot_to_orm(snapshot)
+            self._session.add(orm)
+        else:
+            orm.task_id = snapshot.task_id
+            orm.snapshot_version = snapshot.snapshot_version
+            orm.source_document_ids_json = list(snapshot.source_document_ids)
+            orm.evidence_ids_json = list(snapshot.evidence_ids)
+            orm.knowledge_claim_ids_json = list(snapshot.knowledge_claim_ids)
+            orm.content_fingerprint = snapshot.content_fingerprint
+        self._session.flush()
+        return evidence_snapshot_from_orm(orm)
+
+    def get_evidence_snapshot(self, snapshot_id: str) -> EvidenceSnapshot | None:
+        from app.persistence.converters import evidence_snapshot_from_orm
+        from app.persistence.models import EvidenceSnapshotORM
+
+        orm = self._session.get(EvidenceSnapshotORM, snapshot_id)
+        return evidence_snapshot_from_orm(orm) if orm is not None else None
+
+    def get_latest_snapshot_for_task(self, task_id: str) -> EvidenceSnapshot | None:
+        from app.persistence.converters import evidence_snapshot_from_orm
+        from app.persistence.models import EvidenceSnapshotORM
+
+        stmt = (
+            select(EvidenceSnapshotORM)
+            .where(EvidenceSnapshotORM.task_id == task_id)
+            .order_by(
+                EvidenceSnapshotORM.snapshot_version.desc(),
+                EvidenceSnapshotORM.created_at.desc(),
+            )
+            .limit(1)
+        )
+        orm = self._session.scalars(stmt).first()
+        return evidence_snapshot_from_orm(orm) if orm is not None else None
+
 
 
 

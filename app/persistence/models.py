@@ -1144,6 +1144,124 @@ class TaskArtifactRefORM(Base):
     )
 
 
+class SourceDocumentORM(Base):
+    __tablename__ = "source_documents"
+
+    source_document_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    source_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    source_locator: Mapped[str] = mapped_column(Text, nullable=False)
+    content_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    author: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    media_type: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    metadata_json: Mapped[dict] = mapped_column(EvidenceType, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        Index("ix_source_documents_source_type", "source_type"),
+        Index("ix_source_documents_source_fingerprint", "source_fingerprint"),
+        Index("ix_source_documents_status", "status"),
+        Index("ix_source_documents_created_at", "created_at"),
+    )
+
+
+class TaskSourceORM(Base):
+    __tablename__ = "knowledge_video_task_sources"
+
+    task_source_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    task_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("knowledge_video_tasks.task_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    source_document_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("source_documents.source_document_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    role: Mapped[str] = mapped_column(String(32), nullable=False, default="PRIMARY")
+    associated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        Index("ix_kv_task_sources_task_id", "task_id"),
+        Index("ix_kv_task_sources_source_id", "source_document_id"),
+        UniqueConstraint("task_id", "source_document_id", name="uq_kv_task_source"),
+    )
+
+
+class EvidenceItemORM(Base):
+    __tablename__ = "evidence_items"
+
+    evidence_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    source_document_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("source_documents.source_document_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    locator_json: Mapped[dict] = mapped_column(EvidenceType, nullable=False, default=dict)
+    original_excerpt: Mapped[str] = mapped_column(Text, nullable=False)
+    normalized_fact: Mapped[str | None] = mapped_column(Text, nullable=True)
+    evidence_role: Mapped[str] = mapped_column(String(32), nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
+    extraction_method: Mapped[str] = mapped_column(String(64), nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        Index("ix_evidence_items_source_document_id", "source_document_id"),
+        Index("ix_evidence_items_evidence_role", "evidence_role"),
+        Index("ix_evidence_items_content_hash", "content_hash"),
+        Index("ix_evidence_items_created_at", "created_at"),
+    )
+
+
+class KnowledgeClaimORM(Base):
+    __tablename__ = "knowledge_claims"
+
+    knowledge_claim_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    claim_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    claim_text: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence_refs_json: Mapped[list] = mapped_column(EvidenceType, nullable=False, default=list)
+    verification_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    conflict_evidence_refs_json: Mapped[list] = mapped_column(EvidenceType, nullable=False, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        Index("ix_knowledge_claims_claim_type", "claim_type"),
+        Index("ix_knowledge_claims_verification_status", "verification_status"),
+        Index("ix_knowledge_claims_created_at", "created_at"),
+    )
+
+
+class EvidenceSnapshotORM(Base):
+    __tablename__ = "evidence_snapshots"
+
+    evidence_snapshot_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    task_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("knowledge_video_tasks.task_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    snapshot_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    source_document_ids_json: Mapped[list] = mapped_column(EvidenceType, nullable=False, default=list)
+    evidence_ids_json: Mapped[list] = mapped_column(EvidenceType, nullable=False, default=list)
+    knowledge_claim_ids_json: Mapped[list] = mapped_column(EvidenceType, nullable=False, default=list)
+    content_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        Index("ix_evidence_snapshots_task_id", "task_id"),
+        Index("ix_evidence_snapshots_content_fingerprint", "content_fingerprint"),
+        Index("ix_evidence_snapshots_created_at", "created_at"),
+    )
+
+
+
 
 
 

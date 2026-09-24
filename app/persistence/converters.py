@@ -1533,6 +1533,153 @@ def task_artifact_ref_from_orm(orm: TaskArtifactRefORM) -> TaskArtifactRef:
     )
 
 
+def source_document_to_orm(doc: Any) -> Any:
+    """Converts a domain SourceDocument to a SourceDocumentORM record."""
+    from app.persistence.models import SourceDocumentORM
+
+    return SourceDocumentORM(
+        source_document_id=doc.source_document_id,
+        source_type=doc.source_type.value if hasattr(doc.source_type, "value") else str(doc.source_type),
+        title=doc.title,
+        source_locator=doc.source_locator,
+        content_snapshot=doc.content_snapshot,
+        content_hash=doc.content_hash,
+        source_fingerprint=doc.source_fingerprint,
+        author=doc.author,
+        published_at=doc.published_at,
+        captured_at=doc.captured_at,
+        media_type=doc.media_type,
+        status=doc.status.value if hasattr(doc.status, "value") else str(doc.status),
+        metadata_json=doc.metadata_json,
+        created_at=doc.created_at,
+    )
+
+
+def source_document_from_orm(orm: Any) -> Any:
+    """Reconstructs a domain SourceDocument from a SourceDocumentORM record."""
+    from app.domain.evidence import SourceDocument, SourceStatus, SourceType
+
+    return SourceDocument(
+        source_document_id=orm.source_document_id,
+        source_type=SourceType(orm.source_type),
+        title=orm.title,
+        source_locator=orm.source_locator,
+        content_snapshot=orm.content_snapshot,
+        content_hash=orm.content_hash,
+        source_fingerprint=orm.source_fingerprint,
+        author=orm.author,
+        published_at=orm.published_at,
+        captured_at=orm.captured_at,
+        media_type=orm.media_type,
+        status=SourceStatus(orm.status),
+        metadata_json=orm.metadata_json or {},
+        created_at=orm.created_at,
+    )
+
+
+def evidence_item_to_orm(item: Any) -> Any:
+    """Converts a domain EvidenceItem to an EvidenceItemORM record."""
+    from app.persistence.models import EvidenceItemORM
+
+    return EvidenceItemORM(
+        evidence_id=item.evidence_id,
+        source_document_id=item.source_document_id,
+        locator_json=item.locator,
+        original_excerpt=item.original_excerpt,
+        normalized_fact=item.normalized_fact,
+        evidence_role=item.evidence_role.value if hasattr(item.evidence_role, "value") else str(item.evidence_role),
+        confidence=item.confidence,
+        extraction_method=item.extraction_method,
+        content_hash=item.content_hash,
+        created_at=item.created_at,
+    )
+
+
+def evidence_item_from_orm(orm: Any) -> Any:
+    """Reconstructs a domain EvidenceItem from an EvidenceItemORM record."""
+    from app.domain.evidence import EvidenceItem, EvidenceRole
+
+    return EvidenceItem(
+        evidence_id=orm.evidence_id,
+        source_document_id=orm.source_document_id,
+        locator=orm.locator_json or {},
+        original_excerpt=orm.original_excerpt,
+        normalized_fact=orm.normalized_fact,
+        evidence_role=EvidenceRole(orm.evidence_role),
+        confidence=orm.confidence,
+        extraction_method=orm.extraction_method,
+        content_hash=orm.content_hash,
+        created_at=orm.created_at,
+    )
+
+
+def knowledge_claim_to_orm(claim: Any) -> Any:
+    """Converts a domain KnowledgeClaim to a KnowledgeClaimORM record."""
+    from app.persistence.models import KnowledgeClaimORM
+
+    return KnowledgeClaimORM(
+        knowledge_claim_id=claim.knowledge_claim_id,
+        claim_type=claim.claim_type.value if hasattr(claim.claim_type, "value") else str(claim.claim_type),
+        claim_text=claim.claim_text,
+        evidence_refs_json=list(claim.evidence_refs),
+        verification_status=(
+            claim.verification_status.value
+            if hasattr(claim.verification_status, "value")
+            else str(claim.verification_status)
+        ),
+        conflict_evidence_refs_json=list(claim.conflict_evidence_refs),
+        created_at=claim.created_at,
+    )
+
+
+def knowledge_claim_from_orm(orm: Any) -> Any:
+    """Reconstructs a domain KnowledgeClaim from a KnowledgeClaimORM record."""
+    from app.domain.evidence import ClaimType, KnowledgeClaim, VerificationStatus
+
+    return KnowledgeClaim(
+        knowledge_claim_id=orm.knowledge_claim_id,
+        claim_type=ClaimType(orm.claim_type),
+        claim_text=orm.claim_text,
+        evidence_refs=tuple(orm.evidence_refs_json or []),
+        verification_status=VerificationStatus(orm.verification_status),
+        conflict_evidence_refs=tuple(orm.conflict_evidence_refs_json or []),
+        created_at=orm.created_at,
+    )
+
+
+def evidence_snapshot_to_orm(snapshot: Any) -> Any:
+    """Converts a domain EvidenceSnapshot to an EvidenceSnapshotORM record."""
+    from app.persistence.models import EvidenceSnapshotORM
+
+    return EvidenceSnapshotORM(
+        evidence_snapshot_id=snapshot.evidence_snapshot_id,
+        task_id=snapshot.task_id,
+        snapshot_version=snapshot.snapshot_version,
+        source_document_ids_json=list(snapshot.source_document_ids),
+        evidence_ids_json=list(snapshot.evidence_ids),
+        knowledge_claim_ids_json=list(snapshot.knowledge_claim_ids),
+        content_fingerprint=snapshot.content_fingerprint,
+        created_at=snapshot.created_at,
+    )
+
+
+def evidence_snapshot_from_orm(orm: Any) -> Any:
+    """Reconstructs a domain EvidenceSnapshot from an EvidenceSnapshotORM record."""
+    from app.domain.evidence import EvidenceSnapshot
+
+    return EvidenceSnapshot(
+        evidence_snapshot_id=orm.evidence_snapshot_id,
+        task_id=orm.task_id,
+        snapshot_version=orm.snapshot_version,
+        source_document_ids=tuple(orm.source_document_ids_json or []),
+        evidence_ids=tuple(orm.evidence_ids_json or []),
+        knowledge_claim_ids=tuple(orm.knowledge_claim_ids_json or []),
+        content_fingerprint=orm.content_fingerprint,
+        created_at=orm.created_at,
+    )
+
+
+
 
 
 

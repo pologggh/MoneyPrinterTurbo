@@ -6,10 +6,17 @@ from fastapi import Depends, HTTPException
 from loguru import logger
 from pydantic import BaseModel, Field
 
+from app.application.evidence_service import TaskEvidenceCommandService
 from app.application.task_command_service import TaskCommandService
 from app.application.task_query_service import TaskQueryService
 from app.controllers import base
 from app.controllers.v1.base import new_router
+from app.domain.evidence import (
+    SourceDocument,
+    SourceStatus,
+    SourceType,
+    UnsupportedSourceTypeError,
+)
 from app.domain.workflow_state import (
     InvalidStateTransitionError,
     TerminalStateImmutableError,
@@ -210,3 +217,88 @@ def cancel_task(task_id: str, body: CancelKnowledgeVideoTaskRequest | None = Non
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except (WorkflowConflictError, InvalidStateTransitionError, TerminalStateImmutableError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+class RegisterEvidenceRequest(BaseModel):
+    source_type: SourceType = Field(..., description="Source type: TEXT, URL, FILE, or KNOWLEDGE_BASE")
+    text_content: str | None = Field(default=None, description="Raw text for TEXT source type")
+    url: str | None = Field(default=None, description="URL for URL source type")
+    title: str | None = Field(default=None, description="Optional title or label for the source")
+    author: str | None = Field(default=None, description="Optional author attribution")
+    metadata: dict[str, Any] = Field(default_factory=dict, description="Custom metadata for the source")
+    kb_id: str | None = Field(default=None, description="Knowledge Base ID for KNOWLEDGE_BASE source type")
+
+
+@router.post(
+    "/knowledge-video-tasks/{task_id}/evidence",
+    status_code=201,
+    summary="Register evidence source for a Knowledge Video Task",
+)
+def register_evidence(task_id: str, body: RegisterEvidenceRequest):
+    """
+    Registers an authoritative external source (TEXT, URL, etc.) and associates it with the task.
+    """
+    with get_session() as session:
+        command_service = TaskEvidenceCommandService(session)
+        try:
+            if body.source_type == SourceType.TEXT:
+                if not body.text_content:
+                    raise HTTPException(status_code=400, detail="text_content is required for TEXT source type.")
+                doc = command_service.add_text_source(
+                    task_id=task_id,
+                    text=body.text_content,
+                    title=body.title,
+                    author=body.author,
+                    metadata=body.metadata,
+                )
+            elif body.source_type == SourceType.URL:
+                if not body.url:
+                    raise HTTPException(status_code=400, detail="url is required for URL source type.")
+                doc = command_service.register_url_source(
+                    task_id=task_id,
+                    url=body.url,
+                    title=body.title,
+                    author=body.author,
+                    metadata=body.metadata,
+                )
+            elif body.source_type == SourceType.KNOWLEDGE_BASE:
+                if not body.kb_id:
+                    raise HTTPException(status_code=400, detail="kb_id is required for KNOWLEDGE_BASE source type.")
+                doc = command_service.register_knowledge_base_source(
+                    task_id=task_id,
+                    kb_id=body.kb_id,
+                    metadata=body.metadata,
+                )
+            else:
+                raise HTTPException(status_code=400, detail=f"Unsupported source type: {body.source_type}")
+
+            session.commit()
+
+            return utils.get_response(
+                201,
+                data={
+                    "source_document_id": doc.source_document_id,
+                    "source_type": doc.source_type.value,
+                    "title": doc.title,
+                    "source_locator": doc.source_locator,
+                    "content_hash": doc.content_hash,
+                    "source_fingerprint": doc.source_fingerprint,
+                    "status": doc.status.value,
+                    "media_type": doc.media_type,
+                    "metadata": redact_sensitive_dict(doc.metadata_json),
+                    "created_at": doc.created_at.isoformat(),
+                },
+                message="Evidence source registered",
+            )
+        except HTTPException:
+            raise
+        except ValueError as exc:
+            msg = str(exc)
+            if "not found" in msg.lower():
+                raise HTTPException(status_code=404, detail=msg) from exc
+            raise HTTPException(status_code=400, detail=msg) from exc
+        except TerminalStateImmutableError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except UnsupportedSourceTypeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
