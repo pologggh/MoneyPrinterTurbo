@@ -293,4 +293,5 @@ def get_embedding_provider(
         dimension=dimension,
         timeout=timeout,
         batch_size=batch_size,
+        provider_name=provider_type or "openai_compatible",
     )

@@ -76,14 +76,20 @@ class KnowledgeProcessingService:
             return
         provider_name = self.embedding_provider.provider_name
         model_name = self.embedding_provider.model_name
+        expected_dim = self.embedding_provider.dimension
 
         existing = self.embedding_repo.list_embeddings_for_chunks(
             [c.chunk_id for c in chunks],
             provider=provider_name,
             model=model_name,
         )
-        existing_cids = {e.chunk_id for e in existing}
-        needed_chunks = [c for c in chunks if c.chunk_id not in existing_cids]
+        existing_map = {e.chunk_id: e for e in existing}
+        needed_chunks = [
+            c for c in chunks
+            if c.chunk_id not in existing_map
+            or existing_map[c.chunk_id].text_hash != c.text_hash
+            or existing_map[c.chunk_id].dimension != expected_dim
+        ]
         if not needed_chunks:
             return
 
@@ -211,6 +217,7 @@ class KnowledgeRetrievalService:
         session: Session,
         retrieval_policy_version: str = DEFAULT_HYBRID_POLICY_VERSION,
         embedding_provider: EmbeddingProvider | None = None,
+        min_vector_similarity: float = 0.5,
     ) -> None:
         self._session = session
         self.evidence_repo = EvidenceRepository(session)
@@ -219,6 +226,7 @@ class KnowledgeRetrievalService:
         self.embedding_repo = EmbeddingRepository(session)
         self.retrieval_policy_version = retrieval_policy_version
         self.embedding_provider = embedding_provider or get_embedding_provider()
+        self.min_vector_similarity = min_vector_similarity
 
     def retrieve(
         self,
@@ -227,6 +235,7 @@ class KnowledgeRetrievalService:
         top_k: int = 10,
         source_scope_ids: Sequence[str] | None = None,
         auto_create_evidence_items: bool = True,
+        retrieval_mode: str | None = None,
     ) -> RetrievalSnapshot:
         """Executes scoped hybrid retrieval for a task, creating a frozen RetrievalSnapshot and stable EvidenceItems.
 
@@ -287,26 +296,37 @@ class KnowledgeRetrievalService:
             self._session.commit()
             return snapshot
 
-        # Load embeddings for the allowed sources if provider is available
+        req_mode = (retrieval_mode or "").strip().upper()
+
+        # Load embeddings for the allowed sources if provider is available and mode allows vector
         embeddings: list[ChunkEmbedding] = []
-        if self.embedding_provider:
-            embeddings = self.embedding_repo.list_embeddings_for_sources(
+        if self.embedding_provider and req_mode != "BM25_ONLY":
+            raw_embs = self.embedding_repo.list_embeddings_for_sources(
                 effective_scopes,
                 provider=self.embedding_provider.provider_name,
                 model=self.embedding_provider.model_name,
             )
+            chunk_hash_map = {c.chunk_id: c.text_hash for c in chunks}
+            expected_dim = self.embedding_provider.dimension
+            embeddings = [
+                e for e in raw_embs
+                if e.dimension == expected_dim
+                and chunk_hash_map.get(e.chunk_id) == e.text_hash
+            ]
 
         # Build HybridRetriever and search
         retriever = HybridRetriever(
             chunks=chunks,
             embeddings=embeddings,
-            embedding_provider=self.embedding_provider,
+            embedding_provider=self.embedding_provider if req_mode != "BM25_ONLY" else None,
             retrieval_policy_version=self.retrieval_policy_version,
+            min_vector_similarity=self.min_vector_similarity,
         )
         candidates, mode = retriever.search(
             query=query,
             top_k=top_k,
             source_scope_ids=effective_scopes,
+            mode=retrieval_mode,
         )
 
         # Stable EvidenceItem creation / resolution

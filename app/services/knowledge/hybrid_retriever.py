@@ -52,8 +52,17 @@ class HybridRetriever:
         query: str,
         top_k: int = 10,
         source_scope_ids: Sequence[str] | None = None,
+        mode: str | None = None,
+        retrieval_mode: str | None = None,
     ) -> tuple[list[RetrievalCandidate], str]:
         """Executes hybrid retrieval over scoped source documents.
+
+        Args:
+            query: Query string.
+            top_k: Number of candidates to return.
+            source_scope_ids: Optional list of source document IDs to scope search to.
+            mode: Optional retrieval mode override ("HYBRID", "BM25_ONLY", "DENSE_ONLY", "VECTOR_ONLY").
+            retrieval_mode: Alias for mode.
 
         Returns:
             A tuple of (ranked_candidates, effective_retrieval_mode).
@@ -73,6 +82,55 @@ class HybridRetriever:
 
         if not scoped_chunks:
             return [], "HYBRID"
+
+        req_mode = (retrieval_mode or mode or "HYBRID").strip().upper()
+
+        if req_mode == "BM25_ONLY":
+            bm25_candidates = self.bm25_index.search(
+                query=query,
+                top_k=top_k,
+                source_scope_ids=source_scope_ids,
+            )
+            final_cands = [
+                RetrievalCandidate(
+                    rank=idx + 1,
+                    chunk_id=c.chunk_id,
+                    source_document_id=c.source_document_id,
+                    score=c.score,
+                    retrieval_method="LEXICAL_BM25",
+                    locator=c.locator,
+                    excerpt=c.excerpt,
+                )
+                for idx, c in enumerate(bm25_candidates[:top_k])
+            ]
+            return final_cands, "BM25_ONLY"
+
+        if req_mode in ("DENSE_ONLY", "VECTOR_ONLY"):
+            vector_candidates, vector_failed = self._vector_search(
+                query=query,
+                pool_k=top_k,
+                scopes_set=scopes_set,
+            )
+            if vector_failed or not vector_candidates:
+                return [], "VECTOR_ONLY"
+            final_cands = [
+                RetrievalCandidate(
+                    rank=idx + 1,
+                    chunk_id=vc["chunk_id"],
+                    source_document_id=vc["source_document_id"],
+                    score=vc["score"],
+                    retrieval_method="SEMANTIC_VECTOR",
+                    locator=vc["locator"],
+                    excerpt=vc["excerpt"],
+                )
+                for idx, vc in enumerate(vector_candidates[:top_k])
+            ]
+            return final_cands, "VECTOR_ONLY"
+
+        if req_mode != "HYBRID":
+            raise ValueError(
+                f"Invalid retrieval mode '{req_mode}'. Supported modes: 'HYBRID', 'BM25_ONLY', 'DENSE_ONLY', 'VECTOR_ONLY'."
+            )
 
         # 1. Lexical BM25 Ranking
         # Request more candidates for better rank fusion overlap
@@ -185,11 +243,19 @@ class HybridRetriever:
         if not self.embedding_provider:
             return [], False
 
-        # Filter available embeddings for scoped chunks
+        expected_dim = self.embedding_provider.dimension
+
+        # Filter available embeddings for scoped chunks and dimension compatibility
         valid_embs: list[tuple[KnowledgeChunk, ChunkEmbedding]] = []
         for cid, emb in self.embedding_map.items():
             chunk = self.chunk_map.get(cid)
             if chunk and (scopes_set is None or chunk.source_document_id in scopes_set):
+                if emb.dimension != expected_dim:
+                    logger.warning(
+                        f"[HybridRetriever] Dimension mismatch for chunk '{cid}': "
+                        f"got {emb.dimension}, expected {expected_dim}. Skipping chunk."
+                    )
+                    continue
                 valid_embs.append((chunk, emb))
 
         if not valid_embs:
@@ -204,6 +270,13 @@ class HybridRetriever:
             logger.error(f"[HybridRetriever] Unexpected error embedding query: {exc}")
             return [], True
 
+        if len(q_vec) != expected_dim:
+            logger.warning(
+                f"[HybridRetriever] Query vector dimension mismatch: "
+                f"got {len(q_vec)}, expected {expected_dim}."
+            )
+            return [], True
+
         q_norm = np.linalg.norm(q_vec)
         if q_norm < 1e-12:
             return [], False
@@ -211,6 +284,10 @@ class HybridRetriever:
         q_normed = q_vec / q_norm
 
         matrix = np.array([e[1].vector for e in valid_embs], dtype=np.float32)
+        if matrix.ndim != 2 or matrix.shape[1] != len(q_normed):
+            logger.warning("[HybridRetriever] Incompatible vector dimensions between query and chunk embeddings.")
+            return [], True
+
         norms = np.linalg.norm(matrix, axis=1, keepdims=True)
         # Avoid division by zero
         norms = np.where(norms < 1e-12, 1.0, norms)

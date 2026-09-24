@@ -589,14 +589,29 @@ voices = []
 [embedding]
 # Enable vector embeddings for Hybrid RAG. If false or api_key is empty,
 # the system gracefully and honestly degrades to BM25-only lexical retrieval.
+# 启用向量嵌入支持 Hybrid / Dense 检索。若为 false 或 api_key 为空，
+# 系统会诚实且平滑地回退为纯 BM25 词法检索（零成本、零破坏）。
 enabled = false
-provider = "openai" # "openai" or "fake" (for offline dev/tests)
+provider = "openai" # "openai", "qwen", "siliconflow", or "fake" (for offline dev/tests)
 base_url = "https://api.openai.com/v1"
 api_key = ""
 model = "text-embedding-3-small"
 dimension = 1536
 timeout = 30
 batch_size = 32
+
+# Examples for other OpenAI-compatible embedding providers:
+# 通义千问 (DashScope) 示例:
+# provider = "qwen"
+# base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+# model = "text-embedding-v3"
+# dimension = 1024
+#
+# 硅基流动 (SiliconFlow) 示例:
+# provider = "siliconflow"
+# base_url = "https://api.siliconflow.cn/v1"
+# model = "BAAI/bge-large-zh-v1.5"
+# dimension = 1024
 
 # =============================================================================
 # WebUI Preferences / WebUI 偏好
