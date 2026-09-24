@@ -419,6 +419,24 @@ uv run python cli.py --batch-file ./tasks.json --stop-at video
 参数与本地文件预检；单个任务运行失败不会阻止后续条目，结束后会输出统一的
 JSON 汇总。清单中的相对自定义音频与本地素材路径以清单目录为基准。
 
+#### ⑤ 知识视频开发环境（一键启动 Backend + StageWorker + WebUI）🧩
+
+在开发或调试知识视频智能体工作流（十阶段流水线、RAG 检索、分镜控制台）时，推荐使用统一本地开发启动入口。启动器会自动执行数据库连接检查、应用数据库迁移，并将后端、工作节点与前端界面分别作为**独立的操作系统进程**拉起：
+
+###### Windows
+```powershell
+.\dev.bat
+```
+
+###### macOS 或 Linux
+```shell
+sh dev.sh
+# 或直接运行：python3 dev.py
+```
+
+- 停止方式：终端按 `Ctrl+C` 即可优雅停止所有子进程，无孤儿进程残留。
+- 更多运行模式（无界面模式、Docker Compose 编排、参数详解）：请参考 [开发启动指南](./docs/DEVELOPMENT.md)。
+
 ## 配音、字幕与配乐 🎙️
 
 ### 语音合成
