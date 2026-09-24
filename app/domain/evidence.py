@@ -56,6 +56,16 @@ class VerificationStatus(str, Enum):
     NOT_REQUIRED = "NOT_REQUIRED"
 
 
+class SourceQualityTier(str, Enum):
+    """Quality and authority classification of an external knowledge source."""
+    PRIMARY_OFFICIAL = "PRIMARY_OFFICIAL"
+    PEER_REVIEWED = "PEER_REVIEWED"
+    AUTHORITATIVE_PROFESSIONAL = "AUTHORITATIVE_PROFESSIONAL"
+    SECONDARY_MEDIA = "SECONDARY_MEDIA"
+    BLOG_COMMUNITY = "BLOG_COMMUNITY"
+    UNKNOWN = "UNKNOWN"
+
+
 # =============================================================================
 # Domain Exceptions
 # =============================================================================
@@ -674,5 +684,191 @@ class EvidenceAvailabilityPolicy:
             is_sufficient=True,
             processed_source_count=len(processed_source_ids),
             selected_evidence_count=len(selected_evidence_items),
+        )
+
+
+# =============================================================================
+# Web Research & Source Quality Models
+# =============================================================================
+
+
+def classify_source_quality(
+    url: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> SourceQualityTier:
+    """Deterministic classification of source quality tier based on domain and metadata."""
+    if metadata and "quality_tier" in metadata:
+        tier_val = metadata["quality_tier"]
+        try:
+            return SourceQualityTier(tier_val)
+        except ValueError:
+            pass
+
+    if not url:
+        return SourceQualityTier.UNKNOWN
+
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url.strip())
+    hostname = (parsed.hostname or "").lower()
+    if not hostname:
+        return SourceQualityTier.UNKNOWN
+
+    # 1. Primary official (.gov, .mil, etc.)
+    if hostname.endswith((".gov", ".mil", ".gov.cn", ".gov.uk", ".gov.au", ".europa.eu")):
+        return SourceQualityTier.PRIMARY_OFFICIAL
+
+    # 2. Peer-reviewed academic / research
+    academic_domains = (
+        "arxiv.org",
+        "doi.org",
+        "nature.com",
+        "science.org",
+        "ieee.org",
+        "acm.org",
+        "biorxiv.org",
+        "medrxiv.org",
+        "springer.com",
+        "sciencedirect.com",
+        "wiley.com",
+        "cell.com",
+        "thelancet.com",
+        "pnas.org",
+    )
+    if hostname.endswith((".edu", ".edu.cn", ".ac.uk", ".edu.au")) or any(
+        hostname == d or hostname.endswith("." + d) for d in academic_domains
+    ):
+        return SourceQualityTier.PEER_REVIEWED
+
+    # 3. Authoritative professional (official docs, standard bodies, official project portals)
+    authoritative_domains = (
+        "developer.mozilla.org",
+        "w3.org",
+        "ietf.org",
+        "rfc-editor.org",
+        "docs.python.org",
+        "python.org",
+        "kubernetes.io",
+        "github.com",
+        "stackoverflow.com",
+        "apache.org",
+        "iso.org",
+        "who.int",
+    )
+    if any(hostname == d or hostname.endswith("." + d) for d in authoritative_domains):
+        return SourceQualityTier.AUTHORITATIVE_PROFESSIONAL
+
+    # 4. Secondary media (reputable news outlets)
+    media_domains = (
+        "reuters.com",
+        "apnews.com",
+        "bbc.com",
+        "bbc.co.uk",
+        "nytimes.com",
+        "wsj.com",
+        "bloomberg.com",
+        "xinhuanet.com",
+        "theguardian.com",
+        "cnbc.com",
+        "techcrunch.com",
+        "theverge.com",
+        "ft.com",
+    )
+    if any(hostname == d or hostname.endswith("." + d) for d in media_domains):
+        return SourceQualityTier.SECONDARY_MEDIA
+
+    # 5. Blog / Community / Social
+    community_domains = (
+        "medium.com",
+        "substack.com",
+        "reddit.com",
+        "zhihu.com",
+        "csdn.net",
+        "dev.to",
+        "hashnode.dev",
+        "wikipedia.org",
+        "quora.com",
+        "tieba.baidu.com",
+        "juejin.cn",
+        "twitter.com",
+        "x.com",
+    )
+    if any(hostname == d or hostname.endswith("." + d) for d in community_domains):
+        return SourceQualityTier.BLOG_COMMUNITY
+
+    return SourceQualityTier.UNKNOWN
+
+
+class SearchResult(BaseModel):
+    """Immutable search result from a search provider (discovery metadata only)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    result_id: str
+    title: str
+    url: str
+    snippet: str
+    provider_rank: int
+    provider_metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class WebResearchSnapshot(BaseModel):
+    """An immutable, fingerprinted audit record of a web research execution."""
+
+    model_config = ConfigDict(frozen=True)
+
+    web_research_snapshot_id: str
+    task_id: str
+    stage_attempt: int
+    query: str
+    provider: str
+    search_results: tuple[SearchResult, ...] = Field(default_factory=tuple)
+    selected_urls: tuple[str, ...] = Field(default_factory=tuple)
+    fetch_outcomes: tuple[dict[str, Any], ...] = Field(default_factory=tuple)
+    created_source_document_ids: tuple[str, ...] = Field(default_factory=tuple)
+    content_fingerprint: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    @classmethod
+    def create(
+        cls,
+        task_id: str,
+        stage_attempt: int,
+        query: str,
+        provider: str,
+        search_results: Sequence[SearchResult] = (),
+        selected_urls: Sequence[str] = (),
+        fetch_outcomes: Sequence[dict[str, Any]] = (),
+        created_source_document_ids: Sequence[str] = (),
+        web_research_snapshot_id: str | None = None,
+        now: datetime | None = None,
+    ) -> WebResearchSnapshot:
+        ts = now or datetime.now(UTC)
+        results_tuple = tuple(search_results)
+        urls_tuple = tuple(selected_urls)
+        outcomes_tuple = tuple(fetch_outcomes)
+        docs_tuple = tuple(created_source_document_ids)
+
+        payload = (
+            f"{task_id}:{stage_attempt}:{query}:{provider}:"
+            f"{','.join(r.url for r in results_tuple)}:"
+            f"{','.join(urls_tuple)}:"
+            f"{','.join(docs_tuple)}"
+        ).encode("utf-8")
+        fp = hashlib.sha256(payload).hexdigest()
+
+        return cls(
+            web_research_snapshot_id=web_research_snapshot_id
+            or f"wrs_{uuid4().hex[:24]}",
+            task_id=task_id,
+            stage_attempt=stage_attempt,
+            query=query,
+            provider=provider,
+            search_results=results_tuple,
+            selected_urls=urls_tuple,
+            fetch_outcomes=outcomes_tuple,
+            created_source_document_ids=docs_tuple,
+            content_fingerprint=fp,
+            created_at=ts,
         )
 

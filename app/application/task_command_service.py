@@ -44,6 +44,7 @@ class TaskCommandService:
         language: str = "zh",
         workflow_policy: WorkflowPolicyType = WorkflowPolicyType.AUTO,
         task_metadata: dict[str, Any] | None = None,
+        allow_research: bool = False,
         task_id: str | None = None,
         now: datetime | None = None,
     ) -> KnowledgeVideoTask:
@@ -62,6 +63,7 @@ class TaskCommandService:
             workflow_policy=workflow_policy,
             task_id=task_id,
             task_metadata=task_metadata,
+            allow_research=allow_research,
             now=ts,
         )
         persisted_task = self.task_repo.save_task(task)
@@ -94,6 +96,37 @@ class TaskCommandService:
 
         self.workflow.resume_after_approval(task, now=ts)
         return self.task_repo.get_task(task_id) or task
+
+    def authorize_research(
+        self,
+        task_id: str,
+        resume_if_waiting: bool = True,
+        now: datetime | None = None,
+    ) -> KnowledgeVideoTask:
+        """
+        Authorizes web research for a task. If the task is currently waiting
+        in NEEDS_EVIDENCE or WAITING_USER, automatically re-enqueues an EVIDENCE job.
+        """
+        ts = now or datetime.now(UTC)
+        task = self.task_repo.get_task(task_id)
+        if task is None:
+            raise ValueError(f"Task '{task_id}' not found.")
+
+        if task.task_status.is_terminal:
+            raise TerminalStateImmutableError(
+                f"Cannot authorize research: task '{task_id}' is in terminal state '{task.task_status.value}'."
+            )
+
+        task.authorize_research(now=ts)
+        self.task_repo.save_task(task)
+
+        if resume_if_waiting and task.task_status in (
+            TaskStatus.NEEDS_EVIDENCE,
+            TaskStatus.WAITING_USER,
+        ):
+            return self.retry_task(task_id, reason="Web research authorized", now=ts)
+
+        return task
 
     def retry_task(
         self,

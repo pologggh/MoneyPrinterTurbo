@@ -64,6 +64,7 @@ class CreateKnowledgeVideoTaskRequest(BaseModel):
     language: str = Field(default="zh")
     workflow_policy: WorkflowPolicyType = Field(default=WorkflowPolicyType.AUTO)
     task_metadata: dict[str, Any] = Field(default_factory=dict)
+    allow_research: bool = Field(default=False)
 
 
 class RetryKnowledgeVideoTaskRequest(BaseModel):
@@ -94,6 +95,7 @@ def create_task(body: CreateKnowledgeVideoTaskRequest):
                 language=body.language,
                 workflow_policy=body.workflow_policy,
                 task_metadata=body.task_metadata,
+                allow_research=body.allow_research,
             )
             # Find initial job
             from app.persistence.repositories import WorkflowJobRepository
@@ -223,6 +225,48 @@ def cancel_task(task_id: str, body: CancelKnowledgeVideoTaskRequest | None = Non
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except (WorkflowConflictError, InvalidStateTransitionError, TerminalStateImmutableError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+class AuthorizeResearchRequest(BaseModel):
+    resume_if_waiting: bool = Field(
+        default=True,
+        description="Whether to automatically resume task if waiting in NEEDS_EVIDENCE",
+    )
+
+
+@router.post(
+    "/knowledge-video-tasks/{task_id}/authorize-research",
+    summary="Authorize open-web research augmentation for a Knowledge Video Task",
+)
+def authorize_research(task_id: str, body: AuthorizeResearchRequest | None = None):
+    """
+    Authorizes open-web research for a task. If the task is in NEEDS_EVIDENCE or WAITING_USER,
+    it is automatically re-enqueued for an EVIDENCE stage retry.
+    """
+    resume = body.resume_if_waiting if body is not None else True
+    with get_session() as session:
+        command_service = TaskCommandService(session)
+        try:
+            task = command_service.authorize_research(task_id, resume_if_waiting=resume)
+            session.commit()
+            return utils.get_response(
+                200,
+                data={
+                    "task_id": task.task_id,
+                    "task_status": task.task_status.value,
+                    "current_stage": task.current_stage.value,
+                    "is_research_authorized": task.is_research_authorized,
+                },
+                message="Web research authorized",
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (
+            WorkflowConflictError,
+            InvalidStateTransitionError,
+            TerminalStateImmutableError,
+        ) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 

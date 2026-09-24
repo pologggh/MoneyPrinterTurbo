@@ -425,7 +425,11 @@ class DocumentParser:
         current_section_stack: list[str] = []
         p_index = 0
 
-        for elem in soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6", "p", "li"]):
+        elements = soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6", "p", "li"])
+        if not elements and html_text.strip():
+            return self.parse_text(source_document_id, html_text, title=doc_title)
+
+        for elem in elements:
             text = normalize_text(elem.get_text())
             if not text:
                 continue

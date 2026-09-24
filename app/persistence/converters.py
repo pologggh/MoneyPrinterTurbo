@@ -1752,3 +1752,49 @@ def retrieval_snapshot_from_orm(orm: Any) -> Any:
         content_fingerprint=orm.content_fingerprint,
         created_at=orm.created_at,
     )
+
+
+def web_research_snapshot_to_orm(snapshot: Any) -> Any:
+    """Converts a domain WebResearchSnapshot to a WebResearchSnapshotORM record."""
+    from app.persistence.models import WebResearchSnapshotORM
+
+    results_list = [
+        r.model_dump() if hasattr(r, "model_dump") else r
+        for r in snapshot.search_results
+    ]
+    return WebResearchSnapshotORM(
+        web_research_snapshot_id=snapshot.web_research_snapshot_id,
+        task_id=snapshot.task_id,
+        stage_attempt=snapshot.stage_attempt,
+        query=snapshot.query,
+        provider=snapshot.provider,
+        search_results_json=results_list,
+        selected_urls_json=list(snapshot.selected_urls),
+        fetch_outcomes_json=list(snapshot.fetch_outcomes),
+        created_source_document_ids_json=list(snapshot.created_source_document_ids),
+        content_fingerprint=snapshot.content_fingerprint,
+        created_at=snapshot.created_at,
+    )
+
+
+def web_research_snapshot_from_orm(orm: Any) -> Any:
+    """Reconstructs a domain WebResearchSnapshot from a WebResearchSnapshotORM record."""
+    from app.domain.evidence import SearchResult, WebResearchSnapshot
+
+    search_results = [
+        SearchResult.model_validate(r) if isinstance(r, dict) else r
+        for r in (orm.search_results_json or [])
+    ]
+    return WebResearchSnapshot(
+        web_research_snapshot_id=orm.web_research_snapshot_id,
+        task_id=orm.task_id,
+        stage_attempt=orm.stage_attempt,
+        query=orm.query,
+        provider=orm.provider,
+        search_results=tuple(search_results),
+        selected_urls=tuple(orm.selected_urls_json or []),
+        fetch_outcomes=tuple(orm.fetch_outcomes_json or []),
+        created_source_document_ids=tuple(orm.created_source_document_ids_json or []),
+        content_fingerprint=orm.content_fingerprint,
+        created_at=orm.created_at,
+    )

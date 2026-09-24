@@ -32,6 +32,7 @@ from app.domain.evidence import (
     EvidenceSnapshot,
     KnowledgeClaim,
     SourceDocument,
+    WebResearchSnapshot,
 )
 from app.domain.quality_remediation import (
     QualityRemediationDecision,
@@ -1497,6 +1498,15 @@ class WorkflowJobRepository:
             self._session.flush()
         return count
 
+    def list_jobs_for_task(self, task_id: str) -> list[WorkflowJob]:
+        """Lists all workflow jobs associated with a task ordered by creation time."""
+        stmt = (
+            select(WorkflowJobORM)
+            .where(WorkflowJobORM.task_id == task_id)
+            .order_by(WorkflowJobORM.attempt_number.asc(), WorkflowJobORM.created_at.asc())
+        )
+        return [workflow_job_from_orm(r) for r in self._session.scalars(stmt).all()]
+
 
 class StageExecutionRepository:
     """Repository for managing audit history of stage execution attempts."""
@@ -1549,10 +1559,18 @@ class TaskArtifactRepository:
         orm = self._session.get(TaskArtifactRefORM, ref_id)
         return task_artifact_ref_from_orm(orm) if orm is not None else None
 
-    def list_artifact_refs_for_task(self, task_id: str) -> list[TaskArtifactRef]:
+    def list_artifact_refs_for_task(
+        self,
+        task_id: str,
+        stage: Stage | None = None,
+    ) -> list[TaskArtifactRef]:
+        conditions = [TaskArtifactRefORM.task_id == task_id]
+        if stage is not None:
+            stage_val = stage.value if hasattr(stage, "value") else str(stage)
+            conditions.append(TaskArtifactRefORM.stage == stage_val)
         stmt = (
             select(TaskArtifactRefORM)
-            .where(TaskArtifactRefORM.task_id == task_id)
+            .where(*conditions)
             .order_by(TaskArtifactRefORM.created_at.asc())
         )
         return [task_artifact_ref_from_orm(r) for r in self._session.scalars(stmt).all()]
@@ -1872,4 +1890,46 @@ class EvidenceRepository:
             .order_by(RetrievalSnapshotORM.created_at.desc())
         )
         return [retrieval_snapshot_from_orm(r) for r in self._session.scalars(stmt).all()]
+
+    def save_web_research_snapshot(self, snapshot: WebResearchSnapshot) -> WebResearchSnapshot:
+        """Persists an immutable WebResearchSnapshot record."""
+        from app.persistence.converters import web_research_snapshot_from_orm, web_research_snapshot_to_orm
+        from app.persistence.models import WebResearchSnapshotORM
+
+        orm = self._session.get(WebResearchSnapshotORM, snapshot.web_research_snapshot_id)
+        if orm is None:
+            orm = web_research_snapshot_to_orm(snapshot)
+            self._session.add(orm)
+        else:
+            orm.task_id = snapshot.task_id
+            orm.stage_attempt = snapshot.stage_attempt
+            orm.query = snapshot.query
+            orm.provider = snapshot.provider
+            orm.search_results_json = [r.model_dump() if hasattr(r, "model_dump") else r for r in snapshot.search_results]
+            orm.selected_urls_json = list(snapshot.selected_urls)
+            orm.fetch_outcomes_json = list(snapshot.fetch_outcomes)
+            orm.created_source_document_ids_json = list(snapshot.created_source_document_ids)
+            orm.content_fingerprint = snapshot.content_fingerprint
+        self._session.flush()
+        return web_research_snapshot_from_orm(orm)
+
+    def get_web_research_snapshot(self, snapshot_id: str) -> WebResearchSnapshot | None:
+        """Loads a WebResearchSnapshot by ID."""
+        from app.persistence.converters import web_research_snapshot_from_orm
+        from app.persistence.models import WebResearchSnapshotORM
+
+        orm = self._session.get(WebResearchSnapshotORM, snapshot_id)
+        return web_research_snapshot_from_orm(orm) if orm is not None else None
+
+    def list_web_research_snapshots_for_task(self, task_id: str) -> list[WebResearchSnapshot]:
+        """Lists all web research snapshots executed for a task."""
+        from app.persistence.converters import web_research_snapshot_from_orm
+        from app.persistence.models import WebResearchSnapshotORM
+
+        stmt = (
+            select(WebResearchSnapshotORM)
+            .where(WebResearchSnapshotORM.task_id == task_id)
+            .order_by(WebResearchSnapshotORM.created_at.desc())
+        )
+        return [web_research_snapshot_from_orm(r) for r in self._session.scalars(stmt).all()]
 

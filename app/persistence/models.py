@@ -1309,3 +1309,29 @@ class RetrievalSnapshotORM(Base):
         Index("ix_retrieval_snapshots_content_fingerprint", "content_fingerprint"),
         Index("ix_retrieval_snapshots_created_at", "created_at"),
     )
+
+
+class WebResearchSnapshotORM(Base):
+    __tablename__ = "web_research_snapshots"
+
+    web_research_snapshot_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    task_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("knowledge_video_tasks.task_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    stage_attempt: Mapped[int] = mapped_column(Integer, nullable=False)
+    query: Mapped[str] = mapped_column(String(500), nullable=False)
+    provider: Mapped[str] = mapped_column(String(64), nullable=False)
+    search_results_json: Mapped[list] = mapped_column(EvidenceType, nullable=False, default=list)
+    selected_urls_json: Mapped[list] = mapped_column(EvidenceType, nullable=False, default=list)
+    fetch_outcomes_json: Mapped[list] = mapped_column(EvidenceType, nullable=False, default=list)
+    created_source_document_ids_json: Mapped[list] = mapped_column(EvidenceType, nullable=False, default=list)
+    content_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        Index("ix_web_research_snapshots_task_id", "task_id"),
+        Index("ix_web_research_snapshots_content_fingerprint", "content_fingerprint"),
+        Index("ix_web_research_snapshots_created_at", "created_at"),
+    )

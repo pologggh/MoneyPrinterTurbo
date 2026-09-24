@@ -41,6 +41,21 @@ class KnowledgeVideoTask(BaseModel):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     finished_at: datetime | None = None
 
+    @property
+    def is_research_authorized(self) -> bool:
+        """Indicates whether open-web research has been explicitly authorized for this task."""
+        return bool(self.task_metadata.get("research_authorized", False))
+
+    def authorize_research(self, now: datetime | None = None) -> None:
+        """Authoritatively authorizes web research for this task."""
+        ts = now or datetime.now(UTC)
+        if self.task_status.is_terminal:
+            raise TerminalStateImmutableError(
+                f"Cannot authorize research: task '{self.task_id}' is in terminal state '{self.task_status}'."
+            )
+        self.task_metadata["research_authorized"] = True
+        self.updated_at = ts
+
     @classmethod
     def create(
         cls,
@@ -51,9 +66,13 @@ class KnowledgeVideoTask(BaseModel):
         workflow_policy: WorkflowPolicyType = WorkflowPolicyType.AUTO,
         task_id: str | None = None,
         task_metadata: dict[str, Any] | None = None,
+        allow_research: bool = False,
         now: datetime | None = None,
     ) -> KnowledgeVideoTask:
         ts = now or datetime.now(UTC)
+        meta = dict(task_metadata or {})
+        if allow_research:
+            meta["research_authorized"] = True
         return cls(
             task_id=task_id or uuid4().hex,
             topic=topic,
@@ -63,7 +82,7 @@ class KnowledgeVideoTask(BaseModel):
             target_duration=target_duration,
             aspect_ratio=aspect_ratio,
             language=language,
-            task_metadata=task_metadata or {},
+            task_metadata=meta,
             created_at=ts,
             updated_at=ts,
         )
