@@ -21,8 +21,9 @@ class DummyStageExecutor:
 
 
 def test_default_executor_registry_has_production_plan_and_asset_executors():
-    """Verify that default production registry has executors for EVIDENCE, KNOWLEDGE_PLAN, SCRIPT, STORYBOARD, PRODUCTION_PLAN, and ASSET."""
+    """Verify that default production registry has executors for EVIDENCE, KNOWLEDGE_PLAN, SCRIPT, STORYBOARD, PRODUCTION_PLAN, ASSET, and AUDIO."""
     from app.application.asset_stage_executor import AssetStageExecutor
+    from app.application.audio_stage_executor import AudioStageExecutor
     from app.application.evidence_stage_executor import EvidenceStageExecutor
     from app.application.knowledge_plan_stage_executor import KnowledgePlanStageExecutor
     from app.application.production_plan_stage_executor import ProductionPlanStageExecutor
@@ -30,7 +31,7 @@ def test_default_executor_registry_has_production_plan_and_asset_executors():
     from app.application.storyboard_stage_executor import StoryboardStageExecutor
 
     registry = get_default_executor_registry()
-    assert len(registry.list_supported_stages()) == 6
+    assert len(registry.list_supported_stages()) == 7
     assert registry.has_executor(Stage.EVIDENCE)
     assert isinstance(registry.get_executor(Stage.EVIDENCE), EvidenceStageExecutor)
     assert registry.has_executor(Stage.KNOWLEDGE_PLAN)
@@ -43,6 +44,8 @@ def test_default_executor_registry_has_production_plan_and_asset_executors():
     assert isinstance(registry.get_executor(Stage.PRODUCTION_PLAN), ProductionPlanStageExecutor)
     assert registry.has_executor(Stage.ASSET)
     assert isinstance(registry.get_executor(Stage.ASSET), AssetStageExecutor)
+    assert registry.has_executor(Stage.AUDIO)
+    assert isinstance(registry.get_executor(Stage.AUDIO), AudioStageExecutor)
 
     for stage in Stage:
         if stage not in (
@@ -52,6 +55,7 @@ def test_default_executor_registry_has_production_plan_and_asset_executors():
             Stage.STORYBOARD,
             Stage.PRODUCTION_PLAN,
             Stage.ASSET,
+            Stage.AUDIO,
         ):
             assert not registry.has_executor(stage)
             assert registry.get_executor(stage) is None

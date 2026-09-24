@@ -507,11 +507,10 @@ def test_production_registry_contains_production_plan_and_asset():
 
 
 def test_production_registry_leaves_audio_unsupported():
-    """Verify AUDIO and subsequent stages remain unsupported in default registry."""
+    """Verify COMPOSITION and subsequent stages remain unsupported in default registry."""
     registry = get_default_executor_registry()
-    assert not registry.has_executor(Stage.AUDIO)
-    assert registry.get_executor(Stage.AUDIO) is None
     assert not registry.has_executor(Stage.COMPOSITION)
+    assert registry.get_executor(Stage.COMPOSITION) is None
     assert not registry.has_executor(Stage.QUALITY_REVIEW)
     assert not registry.has_executor(Stage.DELIVERY)
 
@@ -867,10 +866,13 @@ def test_no_early_downstream_work(session_factory, tmp_path):
         assert audio_job.stage == Stage.AUDIO
         assert audio_job.status == JobStatus.QUEUED
 
-        # Run StageWorker with production registry - worker must NOT process AUDIO
+        # Run StageWorker without audio executor - worker must NOT process AUDIO
+        worker_registry = StageExecutorRegistry()
+        worker_registry.register(Stage.PRODUCTION_PLAN, ProductionPlanStageExecutor(session_factory=session_factory))
+        worker_registry.register(Stage.ASSET, executor)
         worker = StageWorker(
             session_factory=session_factory,
-            registry=get_default_executor_registry(session_factory=session_factory),
+            registry=worker_registry,
             worker_id="test-worker",
         )
         processed = worker.run_once()

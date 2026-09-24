@@ -45,16 +45,18 @@ def get_default_executor_registry(
     """
     Returns default production executor registry.
 
-    In Stage P1:
+    In Stage A1:
     - Stage.EVIDENCE is registered with production EvidenceStageExecutor.
     - Stage.KNOWLEDGE_PLAN is registered with production KnowledgePlanStageExecutor.
     - Stage.SCRIPT is registered with production ScriptStageExecutor.
     - Stage.STORYBOARD is registered with production StoryboardStageExecutor.
     - Stage.PRODUCTION_PLAN is registered with production ProductionPlanStageExecutor.
     - Stage.ASSET is registered with production AssetStageExecutor.
-    - Subsequent stages (Stage.AUDIO, etc.) remain unregistered and unsupported.
+    - Stage.AUDIO is registered with production AudioStageExecutor.
+    - Subsequent stages (Stage.COMPOSITION, etc.) remain unregistered and unsupported.
     """
     from app.application.asset_stage_executor import AssetStageExecutor
+    from app.application.audio_stage_executor import AudioStageExecutor
     from app.application.evidence_stage_executor import EvidenceStageExecutor
     from app.application.knowledge_plan_stage_executor import KnowledgePlanStageExecutor
     from app.application.production_plan_stage_executor import ProductionPlanStageExecutor
@@ -68,4 +70,5 @@ def get_default_executor_registry(
     registry.register(Stage.STORYBOARD, StoryboardStageExecutor(session_factory=session_factory))
     registry.register(Stage.PRODUCTION_PLAN, ProductionPlanStageExecutor(session_factory=session_factory))
     registry.register(Stage.ASSET, AssetStageExecutor(session_factory=session_factory))
+    registry.register(Stage.AUDIO, AudioStageExecutor(session_factory=session_factory))
     return registry

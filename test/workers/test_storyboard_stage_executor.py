@@ -363,11 +363,11 @@ def test_production_registry_retains_prior_stages():
     assert isinstance(registry.get_executor(Stage.SCRIPT), ScriptStageExecutor)
 
 
-def test_audio_remains_unsupported():
-    """4. Verify AUDIO remains unsupported in default registry."""
+def test_composition_remains_unsupported():
+    """4. Verify COMPOSITION remains unsupported in default registry."""
     registry = get_default_executor_registry()
-    assert not registry.has_executor(Stage.AUDIO)
-    assert registry.get_executor(Stage.AUDIO) is None
+    assert not registry.has_executor(Stage.COMPOSITION)
+    assert registry.get_executor(Stage.COMPOSITION) is None
 
 
 # =============================================================================

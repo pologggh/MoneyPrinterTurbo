@@ -1994,3 +1994,60 @@ class ScriptRepository:
             )
         )
         return [script_revision_from_orm(r) for r in self._session.scalars(stmt).all()]
+
+
+class AudioOutputRepository:
+    """Repository for persisting and querying immutable AudioOutput records."""
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def save_audio_output(self, audio_output: Any) -> Any:
+        """Persists a new AudioOutput."""
+        from app.persistence.converters import (
+            audio_output_from_orm,
+            audio_output_to_orm,
+        )
+        from app.persistence.models import AudioOutputORM
+
+        orm = self._session.get(AudioOutputORM, audio_output.audio_output_id)
+        if orm is None:
+            orm = audio_output_to_orm(audio_output)
+            self._session.add(orm)
+        self._session.flush()
+        return audio_output_from_orm(orm)
+
+    def get_audio_output(self, audio_output_id: str) -> Any | None:
+        """Retrieves an AudioOutput by primary key ID."""
+        from app.persistence.converters import audio_output_from_orm
+        from app.persistence.models import AudioOutputORM
+
+        orm = self._session.get(AudioOutputORM, audio_output_id)
+        return audio_output_from_orm(orm) if orm is not None else None
+
+    def get_latest_audio_output_for_task(self, task_id: str) -> Any | None:
+        """Returns the latest AudioOutput for a task based on created_at."""
+        from app.persistence.converters import audio_output_from_orm
+        from app.persistence.models import AudioOutputORM
+
+        stmt = (
+            select(AudioOutputORM)
+            .where(AudioOutputORM.task_id == task_id)
+            .order_by(AudioOutputORM.created_at.desc())
+            .limit(1)
+        )
+        orm = self._session.scalars(stmt).first()
+        return audio_output_from_orm(orm) if orm is not None else None
+
+    def list_audio_outputs_for_task(self, task_id: str) -> list[Any]:
+        """Lists all AudioOutputs created for a task in chronological order."""
+        from app.persistence.converters import audio_output_from_orm
+        from app.persistence.models import AudioOutputORM
+
+        stmt = (
+            select(AudioOutputORM)
+            .where(AudioOutputORM.task_id == task_id)
+            .order_by(AudioOutputORM.created_at.asc())
+        )
+        return [audio_output_from_orm(r) for r in self._session.scalars(stmt).all()]
+

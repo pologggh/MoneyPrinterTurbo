@@ -1415,3 +1415,44 @@ class ScriptSegmentORM(Base):
         Index("ix_script_segments_revision_id", "script_revision_id"),
         Index("ix_script_segments_beat_id", "content_beat_id"),
     )
+
+
+class AudioOutputORM(Base):
+    __tablename__ = "audio_outputs"
+
+    audio_output_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    task_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("knowledge_video_tasks.task_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    script_revision_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("script_revisions.script_revision_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    execution_run_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("execution_runs.execution_run_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    narration_audio_path: Mapped[str] = mapped_column(String(512), nullable=False)
+    narration_audio_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    actual_narration_duration: Mapped[float] = mapped_column(Float, nullable=False)
+    subtitle_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    subtitle_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    bgm_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    bgm_volume: Mapped[float | None] = mapped_column(Float, nullable=True, default=0.2)
+    voice_config_snapshot_json: Mapped[dict] = mapped_column(
+        EvidenceType, nullable=False, default=dict
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_audio_outputs_task_id", "task_id"),
+        Index("ix_audio_outputs_script_rev_id", "script_revision_id"),
+        Index("ix_audio_outputs_exec_run_id", "execution_run_id"),
+    )
+

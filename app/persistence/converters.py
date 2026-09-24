@@ -1881,3 +1881,46 @@ def script_revision_from_orm(orm: ScriptRevisionORM) -> Any:
         created_at=orm.created_at,
         segments=segments,
     )
+
+
+def audio_output_to_orm(audio: Any) -> Any:
+    """Converts a domain AudioOutput to an AudioOutputORM record."""
+    from app.persistence.models import AudioOutputORM
+
+    return AudioOutputORM(
+        audio_output_id=audio.audio_output_id,
+        task_id=audio.task_id,
+        script_revision_id=audio.script_revision_id,
+        execution_run_id=audio.execution_run_id,
+        narration_audio_path=audio.narration_audio_path,
+        narration_audio_hash=audio.narration_audio_hash,
+        actual_narration_duration=audio.actual_narration_duration,
+        subtitle_path=audio.subtitle_path,
+        subtitle_hash=audio.subtitle_hash,
+        bgm_path=audio.bgm_path,
+        bgm_volume=audio.bgm_volume,
+        voice_config_snapshot_json=audio.voice_config_snapshot or {},
+        created_at=audio.created_at,
+    )
+
+
+def audio_output_from_orm(orm: Any) -> Any:
+    """Reconstructs a domain AudioOutput from an AudioOutputORM record."""
+    from app.domain.audio import AudioOutput
+
+    return AudioOutput(
+        audio_output_id=orm.audio_output_id,
+        task_id=orm.task_id,
+        script_revision_id=orm.script_revision_id,
+        execution_run_id=orm.execution_run_id,
+        narration_audio_path=orm.narration_audio_path,
+        narration_audio_hash=orm.narration_audio_hash,
+        actual_narration_duration=orm.actual_narration_duration,
+        subtitle_path=orm.subtitle_path,
+        subtitle_hash=orm.subtitle_hash,
+        bgm_path=orm.bgm_path,
+        bgm_volume=orm.bgm_volume,
+        voice_config_snapshot=orm.voice_config_snapshot_json or {},
+        created_at=orm.created_at,
+    )
+
