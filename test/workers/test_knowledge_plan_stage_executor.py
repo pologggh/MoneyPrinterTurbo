@@ -228,11 +228,11 @@ def test_production_registry_contains_no_fake_executors(session_factory):
         assert not executor.__class__.__name__.startswith(("Mock", "Fake", "Dummy"))
 
 
-def test_script_remains_unsupported(session_factory):
+def test_storyboard_remains_unsupported(session_factory):
     registry = get_default_executor_registry(session_factory=session_factory)
-    assert not registry.has_executor(Stage.SCRIPT)
-    assert registry.get_executor(Stage.SCRIPT) is None
-    assert Stage.SCRIPT not in registry.list_supported_stages()
+    assert not registry.has_executor(Stage.STORYBOARD)
+    assert registry.get_executor(Stage.STORYBOARD) is None
+    assert Stage.STORYBOARD not in registry.list_supported_stages()
 
 
 # =============================================================================
@@ -595,6 +595,7 @@ def test_auto_policy_automatically_creates_queued_script_job(session_factory):
     # Inject deterministic stub LLM
     exec_kp = worker.registry.get_executor(Stage.KNOWLEDGE_PLAN)
     exec_kp.llm_caller = lambda p: _make_sample_llm_json(evidence_id=item.evidence_id)
+    worker.registry._executors.pop(Stage.SCRIPT, None)
 
     processed = worker.run_once()
     assert processed is True
@@ -614,7 +615,7 @@ def test_auto_policy_automatically_creates_queued_script_job(session_factory):
         assert script_job.status == JobStatus.QUEUED
         assert script_job.lease_owner is None
 
-    # Worker runs again: SCRIPT is unsupported -> remains QUEUED
+    # Worker runs again: SCRIPT is unsupported for this worker -> remains QUEUED
     second_processed = worker.run_once()
     assert second_processed is False
 
@@ -631,6 +632,7 @@ def test_review_policy_pauses_in_waiting_user_until_approved(session_factory):
     )
     exec_kp = worker.registry.get_executor(Stage.KNOWLEDGE_PLAN)
     exec_kp.llm_caller = lambda p: _make_sample_llm_json(evidence_id=item.evidence_id)
+    worker.registry._executors.pop(Stage.SCRIPT, None)
 
     processed = worker.run_once()
     assert processed is True
@@ -751,6 +753,7 @@ def test_mandatory_success_integration(session_factory):
         title="Why Transformers Use Self-Attention",
         evidence_id=item.evidence_id,
     )
+    worker.registry._executors.pop(Stage.SCRIPT, None)
 
     # Execute KNOWLEDGE_PLAN
     processed = worker.run_once()
@@ -825,6 +828,7 @@ def test_mandatory_review_policy(session_factory):
     )
     exec_kp = worker.registry.get_executor(Stage.KNOWLEDGE_PLAN)
     exec_kp.llm_caller = lambda p: _make_sample_llm_json(evidence_id=item.evidence_id)
+    worker.registry._executors.pop(Stage.SCRIPT, None)
 
     # 1. Execute
     processed = worker.run_once()

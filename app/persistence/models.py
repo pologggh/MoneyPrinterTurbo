@@ -1335,3 +1335,77 @@ class WebResearchSnapshotORM(Base):
         Index("ix_web_research_snapshots_content_fingerprint", "content_fingerprint"),
         Index("ix_web_research_snapshots_created_at", "created_at"),
     )
+
+
+class ScriptRevisionORM(Base):
+    __tablename__ = "script_revisions"
+
+    script_revision_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    task_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("knowledge_video_tasks.task_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    content_plan_revision_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("content_plan_revisions.content_plan_revision_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    revision_number: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    overall_target_duration: Mapped[float] = mapped_column(Float, nullable=False)
+    language: Mapped[str] = mapped_column(String(32), nullable=False, default="zh")
+    content_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+    segments: Mapped[list["ScriptSegmentORM"]] = relationship(
+        "ScriptSegmentORM",
+        back_populates="script_revision",
+        cascade="all, delete-orphan",
+        order_by="ScriptSegmentORM.order",
+    )
+
+    __table_args__ = (
+        Index("ix_script_revisions_task_id", "task_id"),
+        Index("ix_script_revisions_plan_id", "content_plan_revision_id"),
+        Index("ix_script_revisions_fingerprint", "content_fingerprint"),
+    )
+
+
+class ScriptSegmentORM(Base):
+    __tablename__ = "script_segments"
+
+    script_segment_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    script_revision_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("script_revisions.script_revision_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    content_beat_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    beat_lineage_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    order: Mapped[int] = mapped_column(Integer, nullable=False)
+    narration_text: Mapped[str] = mapped_column(Text, nullable=False)
+    target_duration: Mapped[float] = mapped_column(Float, nullable=False)
+    beat_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    evidence_refs: Mapped[list[str]] = mapped_column(
+        EvidenceType, nullable=False, default=list
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+    script_revision: Mapped["ScriptRevisionORM"] = relationship(
+        "ScriptRevisionORM",
+        back_populates="segments",
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "script_revision_id",
+            "order",
+            name="uq_script_segments_revision_order",
+        ),
+        Index("ix_script_segments_revision_id", "script_revision_id"),
+        Index("ix_script_segments_beat_id", "content_beat_id"),
+    )

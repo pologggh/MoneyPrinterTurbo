@@ -48,6 +48,8 @@ from app.persistence.models import (
     ShotORM,
     ShotQualitySelectionORM,
     ShotRevisionORM,
+    ScriptRevisionORM,
+    ScriptSegmentORM,
     StageExecutionORM,
     StoryboardApprovalRecordORM,
     StoryboardSnapshotORM,
@@ -1797,4 +1799,83 @@ def web_research_snapshot_from_orm(orm: Any) -> Any:
         created_source_document_ids=tuple(orm.created_source_document_ids_json or []),
         content_fingerprint=orm.content_fingerprint,
         created_at=orm.created_at,
+    )
+
+
+def script_segment_to_orm(segment: Any) -> ScriptSegmentORM:
+    """Converts a domain ScriptSegment into a ScriptSegmentORM record."""
+    from app.domain.script import ScriptSegment
+
+    return ScriptSegmentORM(
+        script_segment_id=segment.script_segment_id,
+        script_revision_id=segment.script_revision_id,
+        content_beat_id=segment.content_beat_id,
+        beat_lineage_id=segment.beat_lineage_id,
+        order=segment.order,
+        narration_text=segment.narration_text,
+        target_duration=segment.target_duration,
+        beat_type=segment.beat_type.value if segment.beat_type else None,
+        evidence_refs=list(segment.evidence_refs),
+        created_at=segment.created_at,
+    )
+
+
+def script_segment_from_orm(orm: ScriptSegmentORM) -> Any:
+    """Reconstructs a domain ScriptSegment from a ScriptSegmentORM record."""
+    from app.domain.script import ScriptSegment
+
+    return ScriptSegment(
+        script_segment_id=orm.script_segment_id,
+        script_revision_id=orm.script_revision_id,
+        content_beat_id=orm.content_beat_id,
+        beat_lineage_id=orm.beat_lineage_id,
+        order=orm.order,
+        narration_text=orm.narration_text,
+        target_duration=orm.target_duration,
+        beat_type=BeatType(orm.beat_type) if orm.beat_type else None,
+        evidence_refs=tuple(orm.evidence_refs or []),
+        created_at=orm.created_at,
+    )
+
+
+def script_revision_to_orm(revision: Any) -> ScriptRevisionORM:
+    """Converts a domain ScriptRevision into a ScriptRevisionORM record."""
+    from app.domain.script import ScriptRevision
+
+    segments_orm = [script_segment_to_orm(seg) for seg in revision.segments]
+    return ScriptRevisionORM(
+        script_revision_id=revision.script_revision_id,
+        task_id=revision.task_id,
+        content_plan_revision_id=revision.content_plan_revision_id,
+        revision_number=revision.revision_number,
+        overall_target_duration=revision.overall_target_duration,
+        language=revision.language,
+        content_fingerprint=revision.content_fingerprint,
+        created_at=revision.created_at,
+        segments=segments_orm,
+    )
+
+
+def script_revision_from_orm(orm: ScriptRevisionORM) -> Any:
+    """Reconstructs a domain ScriptRevision from a ScriptRevisionORM record."""
+    from app.domain.script import ScriptRevision
+
+    segments = (
+        tuple(
+            script_segment_from_orm(seg_orm)
+            for seg_orm in sorted(orm.segments, key=lambda s: s.order)
+        )
+        if orm.segments
+        else ()
+    )
+    return ScriptRevision(
+        script_revision_id=orm.script_revision_id,
+        task_id=orm.task_id,
+        content_plan_revision_id=orm.content_plan_revision_id,
+        revision_number=orm.revision_number,
+        overall_target_duration=orm.overall_target_duration,
+        language=orm.language,
+        content_fingerprint=orm.content_fingerprint,
+        created_at=orm.created_at,
+        segments=segments,
     )

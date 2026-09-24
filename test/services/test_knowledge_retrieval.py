@@ -249,4 +249,4 @@ def test_evidence_stage_executor_is_registered_in_stage_e3():
     executor = registry.get_executor(Stage.EVIDENCE)
     assert executor is not None
     assert isinstance(executor, EvidenceStageExecutor)
-    assert registry.get_executor(Stage.KNOWLEDGE_PLAN) is None
+    assert registry.get_executor(Stage.STORYBOARD) is None

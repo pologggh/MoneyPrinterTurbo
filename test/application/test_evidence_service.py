@@ -345,13 +345,13 @@ def test_create_task_evidence_snapshot_and_artifact_ref(session_factory):
 
 
 def test_evidence_stage_executor_registration_in_production():
-    """Verify that Stage K1 registers EvidenceStageExecutor in default registry, while SCRIPT remains unhandled."""
+    """Verify that Stage S1 registers EvidenceStageExecutor in default registry, while STORYBOARD remains unhandled."""
     from app.application.evidence_stage_executor import EvidenceStageExecutor
 
     registry = get_default_executor_registry()
     assert registry.has_executor(Stage.EVIDENCE)
     assert isinstance(registry.get_executor(Stage.EVIDENCE), EvidenceStageExecutor)
-    assert not registry.has_executor(Stage.SCRIPT)
+    assert not registry.has_executor(Stage.STORYBOARD)
 
 
 def test_batch_resolution_with_empty_list(session_factory):

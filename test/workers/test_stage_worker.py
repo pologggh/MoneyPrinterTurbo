@@ -112,10 +112,12 @@ def test_unsupported_stage_remains_queued_in_production_registry(session_factory
             workflow_policy=WorkflowPolicyType.AUTO,
         )
         task.advance_stage(Stage.KNOWLEDGE_PLAN)
+        task.advance_stage(Stage.SCRIPT)
+        task.advance_stage(Stage.STORYBOARD)
         job = WorkflowJob.create(
             task_id=task_id,
-            stage=Stage.KNOWLEDGE_PLAN,
-            idempotency_key=f"idemp_{task_id}_knowledge_plan_1",
+            stage=Stage.STORYBOARD,
+            idempotency_key=f"idemp_{task_id}_storyboard_1",
         )
         task_repo.save_task(task)
         job_repo.create_job(job)
@@ -143,7 +145,7 @@ def test_unsupported_stage_remains_queued_in_production_registry(session_factory
         executions = exec_repo.list_executions_for_task(task_id)
 
         assert current_task.task_status == TaskStatus.CREATED
-        assert current_task.current_stage == Stage.KNOWLEDGE_PLAN
+        assert current_task.current_stage == Stage.STORYBOARD
         assert current_job.status == JobStatus.QUEUED
         assert current_job.lease_owner is None
         assert current_job.lease_expires_at is None

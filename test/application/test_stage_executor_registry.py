@@ -20,20 +20,23 @@ class DummyStageExecutor:
         return StageExecutionResult(success=True)
 
 
-def test_default_executor_registry_has_evidence_and_knowledge_plan_executors():
-    """Verify that default production registry has EvidenceStageExecutor for EVIDENCE and KnowledgePlanStageExecutor for KNOWLEDGE_PLAN."""
+def test_default_executor_registry_has_evidence_knowledge_plan_and_script_executors():
+    """Verify that default production registry has EvidenceStageExecutor, KnowledgePlanStageExecutor, and ScriptStageExecutor."""
     from app.application.evidence_stage_executor import EvidenceStageExecutor
     from app.application.knowledge_plan_stage_executor import KnowledgePlanStageExecutor
+    from app.application.script_stage_executor import ScriptStageExecutor
 
     registry = get_default_executor_registry()
-    assert len(registry.list_supported_stages()) == 2
+    assert len(registry.list_supported_stages()) == 3
     assert registry.has_executor(Stage.EVIDENCE)
     assert isinstance(registry.get_executor(Stage.EVIDENCE), EvidenceStageExecutor)
     assert registry.has_executor(Stage.KNOWLEDGE_PLAN)
     assert isinstance(registry.get_executor(Stage.KNOWLEDGE_PLAN), KnowledgePlanStageExecutor)
+    assert registry.has_executor(Stage.SCRIPT)
+    assert isinstance(registry.get_executor(Stage.SCRIPT), ScriptStageExecutor)
 
     for stage in Stage:
-        if stage not in (Stage.EVIDENCE, Stage.KNOWLEDGE_PLAN):
+        if stage not in (Stage.EVIDENCE, Stage.KNOWLEDGE_PLAN, Stage.SCRIPT):
             assert not registry.has_executor(stage)
             assert registry.get_executor(stage) is None
 

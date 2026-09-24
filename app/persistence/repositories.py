@@ -1933,3 +1933,64 @@ class EvidenceRepository:
         )
         return [web_research_snapshot_from_orm(r) for r in self._session.scalars(stmt).all()]
 
+
+class ScriptRepository:
+    """Repository for persisting and querying immutable ScriptRevision and ScriptSegments."""
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def save_revision(self, revision: Any) -> Any:
+        """Persists a new ScriptRevision and its child ScriptSegments."""
+        from app.persistence.converters import (
+            script_revision_from_orm,
+            script_revision_to_orm,
+        )
+        from app.persistence.models import ScriptRevisionORM
+
+        orm = self._session.get(ScriptRevisionORM, revision.script_revision_id)
+        if orm is None:
+            orm = script_revision_to_orm(revision)
+            self._session.add(orm)
+        self._session.flush()
+        return script_revision_from_orm(orm)
+
+    def get_revision(self, script_revision_id: str) -> Any | None:
+        """Retrieves a ScriptRevision by primary key ID."""
+        from app.persistence.converters import script_revision_from_orm
+        from app.persistence.models import ScriptRevisionORM
+
+        orm = self._session.get(ScriptRevisionORM, script_revision_id)
+        return script_revision_from_orm(orm) if orm is not None else None
+
+    def get_latest_revision_for_task(self, task_id: str) -> Any | None:
+        """Returns the latest ScriptRevision for a task based on revision_number / created_at."""
+        from app.persistence.converters import script_revision_from_orm
+        from app.persistence.models import ScriptRevisionORM
+
+        stmt = (
+            select(ScriptRevisionORM)
+            .where(ScriptRevisionORM.task_id == task_id)
+            .order_by(
+                ScriptRevisionORM.revision_number.desc(),
+                ScriptRevisionORM.created_at.desc(),
+            )
+            .limit(1)
+        )
+        orm = self._session.scalars(stmt).first()
+        return script_revision_from_orm(orm) if orm is not None else None
+
+    def list_revisions_for_task(self, task_id: str) -> list[Any]:
+        """Lists all ScriptRevisions created for a task in chronological order."""
+        from app.persistence.converters import script_revision_from_orm
+        from app.persistence.models import ScriptRevisionORM
+
+        stmt = (
+            select(ScriptRevisionORM)
+            .where(ScriptRevisionORM.task_id == task_id)
+            .order_by(
+                ScriptRevisionORM.revision_number.asc(),
+                ScriptRevisionORM.created_at.asc(),
+            )
+        )
+        return [script_revision_from_orm(r) for r in self._session.scalars(stmt).all()]
